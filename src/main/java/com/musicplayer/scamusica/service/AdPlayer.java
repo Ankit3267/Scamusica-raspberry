@@ -105,21 +105,42 @@ public class AdPlayer {
         AppLogger.log("[AdPlayer] Preparing ad: " + ad.getCampaignName());
 
         // Step 1: Save current song state
+        final long[] timeRef = {0L};
+        final int[] volRef = {100};
+        CountDownLatch stateLatch = new CountDownLatch(1);
+        Platform.runLater(() -> {
+            try {
+                timeRef[0] = vlcPlayer.status().time();
+            } catch (Exception ignored) {}
+            try {
+                volRef[0] = vlcPlayer.audio().volume();
+            } catch (Exception ignored) {}
+            stateLatch.countDown();
+        });
         try {
-            savedSongTime = vlcPlayer.status().time();
-        } catch (Exception ignored) {
+            stateLatch.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            AppLogger.log("[AdPlayer] State fetch interrupted");
         }
-
-        int originalVol = vlcPlayer.audio().volume();
+        savedSongTime = timeRef[0];
+        int originalVol = volRef[0];
         try {
             int steps = 20;
             for (int i = 0; i < steps; i++) {
                 if (!isPlayingAd) break;
                 int currentVol = (int) (originalVol * (1.0 - (double) i / steps));
-                vlcPlayer.audio().setVolume(currentVol);
+                Platform.runLater(() -> {
+                    try {
+                        vlcPlayer.audio().setVolume(currentVol);
+                    } catch (Exception ignored) {}
+                });
                 Thread.sleep(100);
             }
-            vlcPlayer.audio().setVolume(0);
+            Platform.runLater(() -> {
+                try {
+                    vlcPlayer.audio().setVolume(0);
+                } catch (Exception ignored) {}
+            });
         } catch (Exception e) {
         }
 
@@ -159,11 +180,7 @@ public class AdPlayer {
                 Platform.runLater(() -> {
                     try {
                         listener.onAdPlaybackStarted(ad);
-                        AppLogger.log("[AdPlayer] STARTING ACTUAL VLC PLAY");
-                        boolean result = vlcPlayer.media().play(adUrl);
-
-                        AppLogger.log("[AdPlayer] VLC PLAY RESULT = " + result);
-
+                        
                         adListener[0] = new MediaPlayerEventAdapter() {
                             @Override
                             public void finished(MediaPlayer mediaPlayer) {
@@ -178,6 +195,11 @@ public class AdPlayer {
                             }
                         };
                         vlcPlayer.events().addMediaPlayerEventListener(adListener[0]);
+
+                        AppLogger.log("[AdPlayer] STARTING ACTUAL VLC PLAY");
+                        boolean result = vlcPlayer.media().play(adUrl);
+                        AppLogger.log("[AdPlayer] VLC PLAY RESULT = " + result);
+
                     } catch (Exception e) {
                         AppLogger.log("[AdPlayer] Failed to start ad audio: " + e.getMessage());
                         latch.countDown();
@@ -187,14 +209,21 @@ public class AdPlayer {
                 boolean finished = latch.await(10, TimeUnit.MINUTES);
                 AppLogger.log("[AdPlayer] Ad latch released, finished=" + finished);
 
+                CountDownLatch cleanupLatch = new CountDownLatch(1);
                 Platform.runLater(() -> {
                     if (adListener[0] != null) {
                         try {
                             vlcPlayer.events().removeMediaPlayerEventListener(adListener[0]);
+                            AppLogger.log("[AdPlayer] Ad event listener removed safely");
                         } catch (Exception ignored) {
                         }
                     }
+                    cleanupLatch.countDown();
                 });
+                
+                try {
+                    cleanupLatch.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException ignored) {}
 
                 Thread.sleep(300); // Minor delay between consecutive audios
             }

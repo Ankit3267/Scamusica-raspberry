@@ -106,7 +106,11 @@ public class PlayerController extends Application {
 
     private ScheduledExecutorService schedular;
     private BlockingQueue<Runnable> operationQueue = new LinkedBlockingQueue<>();
-    private java.util.concurrent.ExecutorService asyncExecutor = java.util.concurrent.Executors.newCachedThreadPool();
+    private java.util.concurrent.ExecutorService asyncExecutor = java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r, "AsyncExecutor-Thread");
+        t.setDaemon(true);
+        return t;
+    });
     private volatile boolean running = true;
     private List<Integer> lastServerIds = new ArrayList<>();
 
@@ -772,7 +776,11 @@ public class PlayerController extends Application {
                                             asyncExecutor.submit(() -> {
                                                 try {
                                                     for (int i = 0; i < 50; i++) {
-                                                        vlcPlayer.audio().setVolume(0);
+                                                        Platform.runLater(() -> {
+                                                            try {
+                                                                vlcPlayer.audio().setVolume(0);
+                                                            } catch (Exception ex) {}
+                                                        });
                                                         Thread.sleep(30);
                                                     }
                                                 } catch (Exception e) {
@@ -785,14 +793,26 @@ public class PlayerController extends Application {
                                             schedular.schedule(() -> {
                                                 asyncExecutor.submit(() -> {
                                                     try {
-                                                        vlcPlayer.audio().setVolume(0);
+                                                        Platform.runLater(() -> {
+                                                            try {
+                                                                vlcPlayer.audio().setVolume(0);
+                                                            } catch (Exception ex) {}
+                                                        });
                                                         int steps = 20;
                                                         for (int i = 1; i <= steps; i++) {
                                                             int currentVol = (int) (originalVol * ((double) i / steps));
-                                                            vlcPlayer.audio().setVolume(currentVol);
+                                                            Platform.runLater(() -> {
+                                                                try {
+                                                                    vlcPlayer.audio().setVolume(currentVol);
+                                                                } catch (Exception ex) {}
+                                                            });
                                                             Thread.sleep(100);
                                                         }
-                                                        vlcPlayer.audio().setVolume(originalVol);
+                                                        Platform.runLater(() -> {
+                                                            try {
+                                                                vlcPlayer.audio().setVolume(originalVol);
+                                                            } catch (Exception ex) {}
+                                                        });
                                                     } catch (Exception e) {
                                                     }
                                                 });
@@ -812,7 +832,11 @@ public class PlayerController extends Application {
                                 asyncExecutor.submit(() -> {
                                     try {
                                         for (int i = 0; i < 50; i++) {
-                                            vlcPlayer.audio().setVolume(0);
+                                            Platform.runLater(() -> {
+                                                try {
+                                                    vlcPlayer.audio().setVolume(0);
+                                                } catch (Exception ex) {}
+                                            });
                                             Thread.sleep(30);
                                         }
                                     } catch (Exception e) {
@@ -825,14 +849,26 @@ public class PlayerController extends Application {
                                 schedular.schedule(() -> {
                                     asyncExecutor.submit(() -> {
                                         try {
-                                            vlcPlayer.audio().setVolume(0);
+                                            Platform.runLater(() -> {
+                                                try {
+                                                    vlcPlayer.audio().setVolume(0);
+                                                } catch (Exception ex) {}
+                                            });
                                             int steps = 20;
                                             for (int i = 1; i <= steps; i++) {
                                                 int currentVol = (int) (originalVol * ((double) i / steps));
-                                                vlcPlayer.audio().setVolume(currentVol);
+                                                Platform.runLater(() -> {
+                                                    try {
+                                                        vlcPlayer.audio().setVolume(currentVol);
+                                                    } catch (Exception ex) {}
+                                                });
                                                 Thread.sleep(100);
                                             }
-                                            vlcPlayer.audio().setVolume(originalVol);
+                                            Platform.runLater(() -> {
+                                                try {
+                                                    vlcPlayer.audio().setVolume(originalVol);
+                                                } catch (Exception ex) {}
+                                            });
                                         } catch (Exception e) {
                                         }
                                     });
