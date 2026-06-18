@@ -143,6 +143,9 @@ public class PlayerController extends Application {
         // === NETWORK MONITOR START ===
         NetworkMonitor.getInstance().start();
         AppLogger.log("[APP] Player started");
+        
+        // Start memory watchdog
+        MemoryWatchdog.getInstance().start();
 
         String appDir = System.getProperty("user.dir");
 
@@ -188,6 +191,7 @@ public class PlayerController extends Application {
             if (asyncExecutor != null) {
                 asyncExecutor.shutdownNow();
             }
+            MemoryWatchdog.getInstance().stop();
         });
         VBox sidebar = sidebarUtil.createSidebar(sidebarTop, settingsIcon);
 
@@ -215,6 +219,16 @@ public class PlayerController extends Application {
 
         VBox leftAlbumVBox = albumUtil.createLeftAlbumVBox(albumHeading, img, songsBox);
         leftAlbumVBox.getChildren().add(0, currentStyleLabel);
+        
+        MemoryWatchdog.getInstance().registerCleanupCallback(() -> {
+            // Hint to JVM that large image buffers can be collected
+            Platform.runLater(() -> {
+                if (albumImageView != null && albumImageView.getImage() != null) {
+                    albumImageView.getImage().cancel();
+                }
+            });
+        });
+        
         recomputeGlobalCountAndUpdateUI();
 
         List<String> tempList;
@@ -398,6 +412,7 @@ public class PlayerController extends Application {
             }
 
             NetworkMonitor.getInstance().stop();
+            MemoryWatchdog.getInstance().stop();
             Platform.exit();
 
             System.exit(0);
