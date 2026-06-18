@@ -84,6 +84,9 @@ public class MemoryWatchdog {
                 // Step 2: Clean temp files (play_*.mp3)
                 cleanTempFiles();
 
+                // Step 2.5: Clear OS buff/cache (Page Cache)
+                clearOsPageCache();
+
                 // Step 3: Call registered cleanup callbacks (ImageCache, etc.)
                 for (Runnable callback : cleanupCallbacks) {
                     try {
@@ -161,6 +164,26 @@ public class MemoryWatchdog {
             }
         } catch (Exception e) {
             AppLogger.log("[MemoryWatchdog] Failed to clean temp files: " + e.getMessage());
+        }
+    }
+
+    private void clearOsPageCache() {
+        try {
+            // First run 'sync' to write any pending data to SD Card
+            new ProcessBuilder("sync").start().waitFor();
+            
+            // Then drop caches (requires sudo without password on Raspberry Pi)
+            ProcessBuilder pb = new ProcessBuilder("sudo", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches");
+            Process p = pb.start();
+            int exitCode = p.waitFor();
+            
+            if (exitCode == 0) {
+                AppLogger.log("[MemoryWatchdog] ✅ OS buff/cache cleared successfully via sysctl.");
+            } else {
+                AppLogger.log("[MemoryWatchdog] ⚠️ Could not clear OS buff/cache. Exit code: " + exitCode + " (sudo required)");
+            }
+        } catch (Exception e) {
+            AppLogger.log("[MemoryWatchdog] Failed to clear OS buff/cache: " + e.getMessage());
         }
     }
 }

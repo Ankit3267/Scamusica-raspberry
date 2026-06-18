@@ -36,6 +36,7 @@ public class AdPlayer {
     });
     private final Queue<Ad> adQueue = new ConcurrentLinkedQueue<>();
     private volatile boolean isPlayingAd = false;
+    private volatile boolean songPausedForAds = false;
 
     private volatile String savedSongPath = null;
     private volatile long savedSongTime = 0L;
@@ -72,6 +73,8 @@ public class AdPlayer {
         adQueue.addAll(shuffled);
 
         if (!isPlayingAd) {
+            isPlayingAd = true;
+            songPausedForAds = false;
             playNextAd();
         }
     }
@@ -81,11 +84,11 @@ public class AdPlayer {
         if (nextAd == null) {
             AppLogger.log("[AdPlayer] Queue empty, resuming song");
             isPlayingAd = false;
+            songPausedForAds = false;
             resumeSong();
             return;
         }
 
-        isPlayingAd = true;
         executor.submit(() -> {
             try {
                 playAdInternal(nextAd);
@@ -104,64 +107,61 @@ public class AdPlayer {
     private void playAdInternal(Ad ad) throws Exception {
         AppLogger.log("[AdPlayer] Preparing ad: " + ad.getCampaignName());
 
-        // Step 1: Save current song state
-        final long[] timeRef = {0L};
-        final int[] volRef = {100};
-        CountDownLatch stateLatch = new CountDownLatch(1);
-        Platform.runLater(() -> {
-            try {
-                timeRef[0] = vlcPlayer.status().time();
-            } catch (Exception ignored) {}
-            try {
-                volRef[0] = vlcPlayer.audio().volume();
-            } catch (Exception ignored) {}
-            stateLatch.countDown();
-        });
-        try {
-            stateLatch.await(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            AppLogger.log("[AdPlayer] State fetch interrupted");
-        }
-        savedSongTime = timeRef[0];
-        int originalVol = volRef[0];
-        try {
-            int steps = 20;
-            for (int i = 0; i < steps; i++) {
-                if (!isPlayingAd) break;
-                int currentVol = (int) (originalVol * (1.0 - (double) i / steps));
-                Platform.runLater(() -> {
-                    try {
-                        vlcPlayer.audio().setVolume(currentVol);
-                    } catch (Exception ignored) {}
-                });
-                Thread.sleep(100);
-            }
+        if (!songPausedForAds) {
+            // Step 1: Save current song state
+            final long[] timeRef = {0L};
+            final int[] volRef = {100};
+            CountDownLatch stateLatch = new CountDownLatch(1);
             Platform.runLater(() -> {
                 try {
-                    vlcPlayer.audio().setVolume(0);
+                    timeRef[0] = vlcPlayer.status().time();
                 } catch (Exception ignored) {}
+                try {
+                    volRef[0] = vlcPlayer.audio().volume();
+                } catch (Exception ignored) {}
+                stateLatch.countDown();
             });
-        } catch (Exception e) {
-        }
-
-        // Step 2: Stop current song
-        Platform.runLater(() -> {
             try {
-
-                savedSongTime = vlcPlayer.status().time();
-
-                AppLogger.log("[AdPlayer] Saving song position: " + savedSongTime);
-
-                vlcPlayer.controls().pause();
-
-                listener.onSongPaused("Ad starting");
-
-                vlcPlayer.audio().setVolume(originalVol);
-
-            } catch (Exception ignored) {
+                stateLatch.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                AppLogger.log("[AdPlayer] State fetch interrupted");
             }
-        });
-        Thread.sleep(600);
+            savedSongTime = timeRef[0];
+            int originalVol = volRef[0];
+            try {
+                int steps = 20;
+                for (int i = 0; i < steps; i++) {
+                    if (!isPlayingAd) break;
+                    int currentVol = (int) (originalVol * (1.0 - (double) i / steps));
+                    Platform.runLater(() -> {
+                        try {
+                            vlcPlayer.audio().setVolume(currentVol);
+                        } catch (Exception ignored) {}
+                    });
+                    Thread.sleep(100);
+                }
+                Platform.runLater(() -> {
+                    try {
+                        vlcPlayer.audio().setVolume(0);
+                    } catch (Exception ignored) {}
+                });
+            } catch (Exception e) {
+            }
+
+            // Step 2: Stop current song
+            Platform.runLater(() -> {
+                try {
+                    savedSongTime = vlcPlayer.status().time();
+                    AppLogger.log("[AdPlayer] Saving song position: " + savedSongTime);
+                    vlcPlayer.controls().pause();
+                    listener.onSongPaused("Ad starting");
+                    vlcPlayer.audio().setVolume(originalVol);
+                } catch (Exception ignored) {
+                }
+            });
+            Thread.sleep(600);
+            songPausedForAds = true;
+        }
 
         // Step 3: Loop over ad audios
         if (ad.getAdAudios() != null && !ad.getAdAudios().isEmpty()) {
