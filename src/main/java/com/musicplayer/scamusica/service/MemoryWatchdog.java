@@ -77,8 +77,9 @@ public class MemoryWatchdog {
             if (usedMB > THRESHOLD_MB) {
                 AppLogger.log("[MemoryWatchdog] ⚠️ THRESHOLD EXCEEDED: " + usedMB + " MB used (OS-level)");
 
-                // Step 1: Force GC
+                // Step 1: Force GC and finalization of native objects (VLC/JNA)
                 System.gc();
+                System.runFinalization();
 
                 // Step 2: Clean temp files (play_*.mp3)
                 cleanTempFiles();
@@ -94,6 +95,10 @@ public class MemoryWatchdog {
 
                 // Step 4: Force GC again after cleanup
                 System.gc();
+                System.runFinalization();
+
+                // Wait for a second to allow OS to reclaim memory
+                try { Thread.sleep(1000); } catch (Exception ignored) {}
 
                 // Step 5: Log result
                 long afterMB = getOsUsedMemoryMB();
