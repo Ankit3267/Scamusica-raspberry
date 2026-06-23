@@ -127,6 +127,8 @@ jobs:
       run: |
         mkdir -p target/jpackage-input
         cp target/$JAR_NAME target/jpackage-input/
+        # Also copy the restart script into the installation bundle
+        cp scripts/restart_scamusica.sh target/jpackage-input/ || echo "Warning: restart script not found during packaging"
 
     - name: Copy VLC libs
       run: |

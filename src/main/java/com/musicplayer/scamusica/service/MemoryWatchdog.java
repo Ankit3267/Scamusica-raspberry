@@ -194,15 +194,29 @@ public class MemoryWatchdog {
         }
         
         try {
-            // Check if restart script exists
-            String scriptPath = System.getProperty("user.home") + File.separator + "scamusica" + File.separator + "restart_scamusica.sh";
-            File scriptFile = new File(scriptPath);
+            // Check multiple possible locations for restart script
+            String[] possiblePaths = {
+                System.getProperty("user.home") + File.separator + "scamusica" + File.separator + "restart_scamusica.sh",
+                System.getProperty("user.dir") + File.separator + "scripts" + File.separator + "restart_scamusica.sh",
+                System.getProperty("user.dir") + File.separator + "restart_scamusica.sh",
+                "/opt/scamusica/bin/restart_scamusica.sh",
+                "/opt/scamusica/lib/app/restart_scamusica.sh"
+            };
             
-            if (scriptFile.exists() && scriptFile.canExecute()) {
-                AppLogger.log("[MemoryWatchdog] Launching restart script: " + scriptPath);
-                new ProcessBuilder(scriptPath).start();
+            File scriptFile = null;
+            for (String path : possiblePaths) {
+                File f = new File(path);
+                if (f.exists() && f.canExecute()) {
+                    scriptFile = f;
+                    break;
+                }
+            }
+            
+            if (scriptFile != null) {
+                AppLogger.log("[MemoryWatchdog] Launching restart script: " + scriptFile.getAbsolutePath());
+                new ProcessBuilder(scriptFile.getAbsolutePath()).start();
             } else {
-                AppLogger.log("[MemoryWatchdog] Restart script not found or not executable at: " + scriptPath + ". Relying on systemd Restart=always if configured.");
+                AppLogger.log("[MemoryWatchdog] Restart script not found or not executable. Checked locations including: " + possiblePaths[0] + ". Relying on systemd Restart=always if configured.");
             }
         } catch (Exception e) {
             AppLogger.log("[MemoryWatchdog] Failed to launch restart script: " + e.getMessage());
