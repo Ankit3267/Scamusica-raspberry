@@ -77,6 +77,9 @@ public class PlayerController extends Application {
     private String currentPlaylistName;
 
     private static final String PREF_VOLUME = "player_volume";
+    private static final String PREF_RESUME_PLAYLIST = "resume_playlist";
+    private static final String PREF_RESUME_TRACK_ID = "resume_track_id";
+    private static final String PREF_RESUME_TIME = "resume_time";
     private final Preferences prefs = Preferences.userNodeForPackage(PlayerController.class);
 
     private final List<PlaylistTrack> playQueue = Collections.synchronizedList(new ArrayList<>());
@@ -231,6 +234,31 @@ public class PlayerController extends Application {
             });
         });
         
+        MemoryWatchdog.getInstance().registerPreRestartCallback(() -> {
+            try {
+                if (currentPlaylistName != null) {
+                    prefs.put(PREF_RESUME_PLAYLIST, currentPlaylistName);
+                }
+                if (!playQueue.isEmpty() && currentTrackIndex < playQueue.size() && currentTrackIndex >= 0) {
+                    prefs.putInt(PREF_RESUME_TRACK_ID, playQueue.get(currentTrackIndex).getId());
+                } else {
+                    prefs.remove(PREF_RESUME_TRACK_ID);
+                }
+                if (vlcPlayer != null) {
+                    long time = 0;
+                    try { time = vlcPlayer.status().time(); } catch (Exception e) {}
+                    if (adPlayer != null && adPlayer.isPlayingAd()) {
+                        time = adPlayer.getSavedSongTime();
+                    }
+                    prefs.putLong(PREF_RESUME_TIME, time);
+                }
+                prefs.flush();
+                AppLogger.log("[PlayerController] Saved resume state: Playlist=" + currentPlaylistName + ", Time=" + prefs.getLong(PREF_RESUME_TIME, 0));
+            } catch (Exception e) {
+                AppLogger.log("[PlayerController] Error saving resume state: " + e.getMessage());
+            }
+        });
+        
         recomputeGlobalCountAndUpdateUI();
 
         List<String> tempList;
@@ -257,7 +285,14 @@ public class PlayerController extends Application {
         }
 
         playlistMaster.addAll(tempList);
-        playlistCurrent[0] = playlistMaster.get(0);
+        
+        String savedPlaylist = prefs.get(PREF_RESUME_PLAYLIST, null);
+        if (savedPlaylist != null && playlistMaster.contains(savedPlaylist)) {
+            playlistCurrent[0] = savedPlaylist;
+        } else {
+            playlistCurrent[0] = playlistMaster.get(0);
+        }
+        
         playlistViewItems.setAll(
                 playlistMaster.stream()
                         .filter(s -> !s.equals(playlistCurrent[0]))
@@ -355,6 +390,9 @@ public class PlayerController extends Application {
                 this::hideDropdown,
                 selectedPlaylistName -> {
                     currentPlaylistName = selectedPlaylistName;
+                    prefs.remove(PREF_RESUME_PLAYLIST);
+                    prefs.remove(PREF_RESUME_TRACK_ID);
+                    prefs.remove(PREF_RESUME_TIME);
                     try {
                         loadPlaylistAndStart(
                                 selectedPlaylistName,
@@ -1402,6 +1440,19 @@ public class PlayerController extends Application {
 
         albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.loading"));
         if (!playQueue.isEmpty()) {
+            
+            int savedTrackId = prefs.getInt(PREF_RESUME_TRACK_ID, -1);
+            if (savedTrackId != -1) {
+                for (int i = 0; i < playQueue.size(); i++) {
+                    if (playQueue.get(i).getId() == savedTrackId) {
+                        currentTrackIndex = i;
+                        AppLogger.log("[PlayerController] Resuming from saved track index: " + currentTrackIndex);
+                        break;
+                    }
+                }
+                prefs.remove(PREF_RESUME_TRACK_ID);
+            }
+            
             playTrack(
                     albumHeading,
                     titleLabel,
@@ -1588,8 +1639,15 @@ public class PlayerController extends Application {
                         final String finalUrl = localUrl;
 
                         Platform.runLater(() -> {
-
-                            vlcPlayer.media().play(tempFile.getAbsolutePath());
+                            
+                            long savedTime = prefs.getLong(PREF_RESUME_TIME, 0);
+                            if (savedTime > 0) {
+                                AppLogger.log("[PLAYER] Resuming from saved time: " + savedTime);
+                                prefs.remove(PREF_RESUME_TIME);
+                                vlcPlayer.media().play(tempFile.getAbsolutePath(), ":start-time=" + (savedTime / 1000.0f));
+                            } else {
+                                vlcPlayer.media().play(tempFile.getAbsolutePath());
+                            }
 
                             if (!vlcHandlersAttached) {
 
@@ -1649,7 +1707,14 @@ public class PlayerController extends Application {
 
         AppLogger.log("[PLAYER] Streaming from URL: " + safeUrl);
 
-        vlcPlayer.media().play(safeUrl);
+        long savedTime = prefs.getLong(PREF_RESUME_TIME, 0);
+        if (savedTime > 0) {
+            AppLogger.log("[PLAYER] Resuming from saved time: " + savedTime);
+            prefs.remove(PREF_RESUME_TIME);
+            vlcPlayer.media().play(safeUrl, ":start-time=" + (savedTime / 1000.0f));
+        } else {
+            vlcPlayer.media().play(safeUrl);
+        }
 
         if (!vlcHandlersAttached) {
 

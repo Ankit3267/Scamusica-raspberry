@@ -22,8 +22,15 @@ public class MemoryWatchdog {
     // User requested around 1.1GB (1100 MB)
     private static final int THRESHOLD_MB = 1100;
 
+    // Restart threshold in MB (1200 MB for testing)
+    private static final int RESTART_THRESHOLD_MB = 1200;
+    private volatile boolean restartTriggered = false;
+
     // Cleanup callbacks (e.g. for ImageCache, PlayerController image views)
     private final List<Runnable> cleanupCallbacks = new ArrayList<>();
+    
+    // Pre-restart callbacks (e.g. for saving state)
+    private final List<Runnable> preRestartCallbacks = new ArrayList<>();
 
     private MemoryWatchdog() {}
 
@@ -37,6 +44,12 @@ public class MemoryWatchdog {
     public void registerCleanupCallback(Runnable callback) {
         if (callback != null) {
             cleanupCallbacks.add(callback);
+        }
+    }
+
+    public void registerPreRestartCallback(Runnable callback) {
+        if (callback != null) {
+            preRestartCallbacks.add(callback);
         }
     }
 
@@ -117,6 +130,12 @@ public class MemoryWatchdog {
                 // Log result after cleanup
                 long afterMB = getOsUsedMemoryMB();
                 AppLogger.log("[MemoryWatchdog] ✅ CLEANUP DONE: " + usedMB + " MB -> " + afterMB + " MB (OS-level)");
+                
+                // Trigger restart if still above restart threshold
+                if (afterMB > RESTART_THRESHOLD_MB && !restartTriggered) {
+                    AppLogger.log("[MemoryWatchdog] 🚨 RESTART THRESHOLD EXCEEDED after cleanup. Triggering restart...");
+                    triggerSelfRestart();
+                }
             } else {
                 AppLogger.log("[MemoryWatchdog] ✅ OK: " + usedMB + " MB used (Threshold: " + THRESHOLD_MB + " MB). JVM Cleanup executed.");
             }
@@ -157,6 +176,45 @@ public class MemoryWatchdog {
             }
         }
         return -1;
+    }
+
+    private void triggerSelfRestart() {
+        if (restartTriggered) return;
+        restartTriggered = true;
+        
+        AppLogger.log("[MemoryWatchdog] Triggering auto-restart...");
+        
+        // Call pre-restart callbacks to save state
+        for (Runnable callback : preRestartCallbacks) {
+            try {
+                callback.run();
+            } catch (Exception e) {
+                AppLogger.log("[MemoryWatchdog] Error in pre-restart callback: " + e.getMessage());
+            }
+        }
+        
+        try {
+            // Check if restart script exists
+            String scriptPath = System.getProperty("user.home") + File.separator + "scamusica" + File.separator + "restart_scamusica.sh";
+            File scriptFile = new File(scriptPath);
+            
+            if (scriptFile.exists() && scriptFile.canExecute()) {
+                AppLogger.log("[MemoryWatchdog] Launching restart script: " + scriptPath);
+                new ProcessBuilder(scriptPath).start();
+            } else {
+                AppLogger.log("[MemoryWatchdog] Restart script not found or not executable at: " + scriptPath + ". Relying on systemd Restart=always if configured.");
+            }
+        } catch (Exception e) {
+            AppLogger.log("[MemoryWatchdog] Failed to launch restart script: " + e.getMessage());
+        }
+        
+        // Wait briefly to allow script to start, then exit
+        new Thread(() -> {
+            try { Thread.sleep(3000); } catch (Exception ignored) {}
+            AppLogger.log("[MemoryWatchdog] Exiting JVM now.");
+            AppLogger.close();
+            System.exit(0);
+        }).start();
     }
 
     private void cleanTempFiles() {

@@ -1,0 +1,24 @@
+[Unit]
+Description=Scamusica Player
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+# Wait a bit after graphical session before starting
+ExecStartPre=/bin/sleep 5
+ExecStart=/opt/scamusica/bin/Scamusica
+Restart=always
+RestartSec=5
+
+# Safety net: If memory exceeds 3.5GB, systemd will kill and restart it
+MemoryMax=3500M
+
+# Variables required for GUI applications and VLC under systemd user service
+Environment=DISPLAY=:0
+# If Wayland is used, this might be needed:
+# Environment=WAYLAND_DISPLAY=wayland-0
+# Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
