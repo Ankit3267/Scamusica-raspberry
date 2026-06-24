@@ -9,6 +9,8 @@ import javafx.application.Application;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.io.OutputStream;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 
@@ -41,18 +43,28 @@ public class Main extends Application {
     }
 
     /**
-     * ✅ Checks if a throwable (or any of its causes) is JNA-related.
+     * ✅ Checks if a message string is JNA/VLC related.
+     */
+    private static boolean isJnaRelatedMessage(String msg) {
+        if (msg == null)
+            return false;
+        return msg.contains("JNA")
+                || msg.contains("com.sun.jna")
+                || msg.contains("failed to create structure")
+                || msg.contains("error handling callback")
+                || msg.contains("uk.co.caprica.vlcj")
+                || msg.contains("Native");
+    }
+
+    /**
+     * ✅ Checks if a Throwable (or any of its causes/stack) is JNA-related.
      */
     private static boolean isJnaRelated(Throwable throwable) {
         Throwable cause = throwable;
         while (cause != null) {
-            String msg = cause.getMessage();
-            String str = cause.toString();
-            if ((msg != null && (msg.contains("JNA") || msg.contains("com.sun.jna") || msg.contains("Native")))
-                    || (str != null && (str.contains("JNA") || str.contains("com.sun.jna")))) {
+            if (isJnaRelatedMessage(cause.getMessage()) || isJnaRelatedMessage(cause.toString())) {
                 return true;
             }
-            // Also check stack trace elements for JNA package
             for (StackTraceElement ste : cause.getStackTrace()) {
                 if (ste.getClassName().startsWith("com.sun.jna")
                         || ste.getClassName().startsWith("uk.co.caprica.vlcj")) {
@@ -147,6 +159,49 @@ public class Main extends Application {
         }, "JNA-Restart-Thread").start();
     }
 
+    /**
+     * ✅ THE KEY FIX: Intercept System.err to catch JNA errors that are printed
+     * directly to stderr (not thrown as exceptions). This is how JNA reports
+     * "error handling callback" and "failed to create structure" errors.
+     *
+     * Also used for TESTING — you can simulate by printing to System.err.
+     */
+    private static void installStderrInterceptor() {
+        final PrintStream originalStderr = System.err;
+
+        PrintStream interceptor = new PrintStream(new OutputStream() {
+            private final StringBuilder buffer = new StringBuilder();
+
+            @Override
+            public void write(int b) {
+                char c = (char) b;
+                buffer.append(c);
+
+                // Process line by line
+                if (c == '\n') {
+                    String line = buffer.toString().trim();
+                    buffer.setLength(0);
+
+                    // Always write to original stderr so it still shows in terminal
+                    originalStderr.println(line);
+
+                    // Always log to AppLogger
+                    if (!line.isEmpty()) {
+                        AppLogger.log("[STDERR] " + line);
+                    }
+
+                    // ✅ Check if this is a JNA error → trigger restart
+                    if (isJnaRelatedMessage(line) && !restartInitiated) {
+                        handleJnaErrorAndRestart("StderrInterceptor", new RuntimeException("Intercepted JNA Error: " + line));
+                    }
+                }
+            }
+        }, true);
+
+        System.setErr(interceptor);
+        AppLogger.log("[Main] ✅ stderr interceptor installed. JNA errors will now trigger restart.");
+    }
+
     @Override
     public void start(Stage primaryStage) {
         System.setProperty("java.net.useSystemProxies", "true");
@@ -188,7 +243,10 @@ public class Main extends Application {
     public static void main(String[] args) {
         AppLogger.init();
 
-        // ✅ Handler 1: Catches JNA errors thrown on background/non-FX threads
+        // ✅ Handler 1: Intercept stderr — catches JNA "error handling callback" errors
+        installStderrInterceptor();
+
+        // ✅ Handler 2: Catches JNA errors thrown on background/non-FX threads
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             // Always log every uncaught exception with full stack trace
             AppLogger.log("[Main] ⚠️ Uncaught Exception on thread [" + thread.getName() + "]: "
