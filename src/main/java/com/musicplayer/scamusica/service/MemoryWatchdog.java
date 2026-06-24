@@ -58,6 +58,16 @@ public class MemoryWatchdog {
         }
     }
 
+    public void runPreRestartCallbacks() {
+        for (Runnable callback : preRestartCallbacks) {
+            try {
+                callback.run();
+            } catch (Exception e) {
+                AppLogger.log("[MemoryWatchdog] Error in pre-restart callback: " + e.getMessage());
+            }
+        }
+    }
+
     public void start() {
         if (running)
             return;

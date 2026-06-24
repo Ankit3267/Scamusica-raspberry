@@ -125,6 +125,13 @@ public class Main extends Application {
 
         AppLogger.log("[" + source + "] Initiating application restart due to JNA error...");
 
+        // Save playback state before exiting so player can resume from the exact position
+        try {
+            com.musicplayer.scamusica.service.MemoryWatchdog.getInstance().runPreRestartCallbacks();
+        } catch (Throwable t) {
+            AppLogger.log("[" + source + "] Error running pre-restart callbacks: " + t.getMessage());
+        }
+
         boolean relaunchScheduled = false;
 
         // ✅ Strategy 1: Find and launch restart script (FULLY DETACHED)
