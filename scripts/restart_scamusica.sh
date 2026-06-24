@@ -1,14 +1,18 @@
 #!/bin/bash
-LOG_FILE="/var/log/scamusica/restart.log"
+LOG_FILE="/home/pi/.scamusica/logs/restart.log"
 mkdir -p "$(dirname "$LOG_FILE")"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🔄 Restart initiated (PID $$)" >> "$LOG_FILE"
 
-# Aggressive kill
+# Find and kill other instances safely (NEVER kill this script's PID)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Killing old instances..." >> "$LOG_FILE"
-pkill -9 -f 'com.musicplayer.scamusica.Main' 2>/dev/null || true
-pkill -9 -f 'Scamusica' 2>/dev/null || true
-pkill -9 -f 'scamusica.jar' 2>/dev/null || true
+for pattern in 'com.musicplayer.scamusica.Main' 'Scamusica' 'scamusica.jar'; do
+    for pid in $(pgrep -f "$pattern"); do
+        if [ "$pid" != "$$" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+done
 sleep 3
 
 export DISPLAY=:0
