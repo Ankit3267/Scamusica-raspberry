@@ -89,9 +89,14 @@ public class Main extends Application {
     }
 
     /**
-     * ✅ Core restart logic — shared by both uncaught handler and JavaFX thread
-     * handler.
+     * ✅ Core restart logic — shared by both uncaught handler, JavaFX thread
+     * handler, and StderrInterceptor.
      * Prevents double-triggering with restartInitiated flag.
+     *
+     * Uses a 3-tier restart strategy:
+     * 1. Try restart_scamusica.sh script (full cleanup + relaunch)
+     * 2. Try direct relaunch of /opt/scamusica/bin/Scamusica (fallback)
+     * 3. Rely on systemd Restart=always (last resort)
      */
     static void handleJnaErrorAndRestart(String source, Throwable throwable) {
         if (restartInitiated)
@@ -115,9 +120,11 @@ public class Main extends Application {
 
         AppLogger.log("[" + source + "] Initiating application restart due to JNA error...");
 
-        // ✅ Find and launch restart script
+        boolean relaunchScheduled = false;
+
+        // ✅ Strategy 1: Find and launch restart script
         try {
-            String[] possiblePaths = {
+            String[] possibleScriptPaths = {
                     System.getProperty("user.home") + File.separator + "scamusica" + File.separator
                             + "restart_scamusica.sh",
                     System.getProperty("user.dir") + File.separator + "scripts" + File.separator
@@ -127,35 +134,61 @@ public class Main extends Application {
                     "/opt/scamusica/lib/app/restart_scamusica.sh"
             };
 
-            File scriptFile = null;
-            for (String path : possiblePaths) {
+            for (String path : possibleScriptPaths) {
                 File f = new File(path);
                 if (f.exists() && f.canExecute()) {
-                    scriptFile = f;
+                    AppLogger.log("[" + source + "] ✅ Launching restart script: " + f.getAbsolutePath());
+                    new ProcessBuilder(f.getAbsolutePath()).start();
+                    relaunchScheduled = true;
                     break;
                 }
             }
 
-            if (scriptFile != null) {
-                AppLogger.log("[" + source + "] Launching restart script: " + scriptFile.getAbsolutePath());
-                new ProcessBuilder(scriptFile.getAbsolutePath()).start();
-            } else {
-                AppLogger.log("[" + source + "] ⚠️ Restart script not found in any known path. Checked: "
-                        + String.join(", ", possiblePaths));
-                AppLogger.log("[" + source + "] Relying on systemd Restart=always if configured.");
+            if (!relaunchScheduled) {
+                AppLogger.log("[" + source + "] ⚠️ Restart script not found. Trying direct relaunch...");
             }
         } catch (Exception e) {
-            AppLogger.log("[" + source + "] Failed to launch restart script: " + e.getMessage()
-                    + "\n" + getFullStackTrace(e));
+            AppLogger.log("[" + source + "] Failed to launch restart script: " + e.getMessage());
         }
 
-        // ✅ Exit JVM after delay to allow script to start
+        // ✅ Strategy 2: Direct relaunch of the app binary
+        if (!relaunchScheduled) {
+            try {
+                String[] possibleAppPaths = {
+                        "/opt/scamusica/bin/Scamusica",
+                        "/opt/scamusica/lib/app/scamusica_wrapper.sh"
+                };
+
+                for (String path : possibleAppPaths) {
+                    File f = new File(path);
+                    if (f.exists() && f.canExecute()) {
+                        AppLogger.log("[" + source + "] ✅ Direct relaunch via: " + f.getAbsolutePath());
+                        ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+                                "sleep 5 && DISPLAY=:0 " + f.getAbsolutePath() + " &");
+                        pb.redirectErrorStream(true);
+                        pb.start();
+                        relaunchScheduled = true;
+                        break;
+                    }
+                }
+
+                if (!relaunchScheduled) {
+                    AppLogger.log("[" + source + "] ⚠️ App binary not found. Relying on systemd Restart=always.");
+                }
+            } catch (Exception e) {
+                AppLogger.log("[" + source + "] Failed direct relaunch: " + e.getMessage());
+            }
+        }
+
+        final boolean didScheduleRelaunch = relaunchScheduled;
+
+        // ✅ Exit JVM after delay to allow script/process to start
         new Thread(() -> {
             try {
-                Thread.sleep(3000);
+                Thread.sleep(didScheduleRelaunch ? 3000 : 1000);
             } catch (Exception ignored) {
             }
-            AppLogger.log("[" + source + "] Exiting JVM now due to JNA error.");
+            AppLogger.log("[" + source + "] Exiting JVM now. Relaunch scheduled: " + didScheduleRelaunch);
             AppLogger.close();
             System.exit(1);
         }, "JNA-Restart-Thread").start();
