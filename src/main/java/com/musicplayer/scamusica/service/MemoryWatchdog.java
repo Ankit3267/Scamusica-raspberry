@@ -5,6 +5,9 @@ import com.musicplayer.scamusica.util.AppLogger;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -18,21 +21,23 @@ public class MemoryWatchdog {
     private ScheduledExecutorService cacheClearScheduler;
     private volatile boolean running = false;
 
-    // Threshold in MB based on OS level free -m output
-    // User requested around 1.1GB (1100 MB)
+    // Cleanup threshold — triggers GC + callbacks (1.1 GB)
     private static final int THRESHOLD_MB = 1100;
 
-    // Restart threshold in MB (1200 MB for testing)
-    private static final int RESTART_THRESHOLD_MB = 1200;
+    // Restart threshold — if RAM is above this at midnight, restart (3 GB)
+    private static final int RESTART_THRESHOLD_MB = 3000;
+
+    // ✅ Flag to prevent multiple restarts in same session
     private volatile boolean restartTriggered = false;
 
     // Cleanup callbacks (e.g. for ImageCache, PlayerController image views)
     private final List<Runnable> cleanupCallbacks = new ArrayList<>();
-    
-    // Pre-restart callbacks (e.g. for saving state)
+
+    // Pre-restart callbacks (e.g. for saving state before restart)
     private final List<Runnable> preRestartCallbacks = new ArrayList<>();
 
-    private MemoryWatchdog() {}
+    private MemoryWatchdog() {
+    }
 
     public static MemoryWatchdog getInstance() {
         if (instance == null) {
@@ -54,26 +59,38 @@ public class MemoryWatchdog {
     }
 
     public void start() {
-        if (running) return;
+        if (running)
+            return;
         running = true;
 
-        scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "MemoryWatchdog-Thread");
             t.setDaemon(true);
             return t;
         });
 
-        // Run JVM/OS check and temp file cleanup every 15 minutes
+        // Run memory check + cleanup every 15 minutes
         scheduler.scheduleAtFixedRate(this::checkMemoryAndClean, 15, 15, TimeUnit.MINUTES);
-        AppLogger.log("[MemoryWatchdog] Started. Monitoring OS memory usage every 15 mins. Threshold: " + THRESHOLD_MB + " MB");
+        AppLogger.log("[MemoryWatchdog] Started. Memory check every 15 mins. "
+                + "Cleanup threshold: " + THRESHOLD_MB + " MB. "
+                + "Restart threshold: " + RESTART_THRESHOLD_MB + " MB (at midnight).");
+
+        // ✅ Schedule daily midnight restart check
+        long delayToMidnight = computeDelayToNextMidnight();
+        AppLogger.log("[MemoryWatchdog] Next midnight restart check in " + (delayToMidnight / 60000) + " minutes.");
+        scheduler.scheduleAtFixedRate(
+                this::checkMidnightRestart,
+                delayToMidnight,
+                TimeUnit.DAYS.toMillis(1),
+                TimeUnit.MILLISECONDS);
 
         cacheClearScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "CacheClear-Thread");
             t.setDaemon(true);
             return t;
         });
-        
-        // Clear OS page cache every 1 hour (60 mins)
+
+        // Clear OS page cache every 1 hour
         cacheClearScheduler.scheduleAtFixedRate(this::clearOsPageCache, 60, 60, TimeUnit.MINUTES);
     }
 
@@ -87,104 +104,117 @@ public class MemoryWatchdog {
             cacheClearScheduler.shutdownNow();
             cacheClearScheduler = null;
         }
-        AppLogger.log("[MemoryWatchdog] Stopped");
+        AppLogger.log("[MemoryWatchdog] Stopped.");
     }
 
+    // ─────────────────────────────────────────────
+    // ✅ MIDNIGHT RESTART CHECK — called once per day at midnight
+    // ─────────────────────────────────────────────
+    private void checkMidnightRestart() {
+        try {
+            AppLogger.log("[MemoryWatchdog] 🕛 Midnight restart check triggered.");
+            long usedMB = getOsUsedMemoryMB();
+
+            if (usedMB == -1) {
+                // Fallback to JVM if OS check fails
+                Runtime rt = Runtime.getRuntime();
+                usedMB = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+                AppLogger.log("[MemoryWatchdog] OS check failed at midnight. JVM heap used: " + usedMB + " MB");
+            } else {
+                AppLogger.log("[MemoryWatchdog] Midnight RAM check: " + usedMB
+                        + " MB used (OS-level). Restart threshold: " + RESTART_THRESHOLD_MB + " MB.");
+            }
+
+            if (usedMB > RESTART_THRESHOLD_MB) {
+                AppLogger.log("[MemoryWatchdog] ⚠️ RAM exceeds restart threshold at midnight (" + usedMB + " MB > "
+                        + RESTART_THRESHOLD_MB + " MB). Triggering restart...");
+                triggerSelfRestart();
+            } else {
+                AppLogger.log("[MemoryWatchdog] ✅ Midnight check OK: " + usedMB + " MB. No restart needed.");
+                // Reset flag so restart can happen next midnight if needed
+                restartTriggered = false;
+            }
+        } catch (Exception e) {
+            AppLogger.log("[MemoryWatchdog] Error in midnight restart check: " + e.getMessage());
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // ✅ Compute milliseconds until next midnight
+    // ─────────────────────────────────────────────
+    private long computeDelayToNextMidnight() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay();
+        return ChronoUnit.MILLIS.between(now, nextMidnight);
+    }
+
+    // ─────────────────────────────────────────────
+    // Memory check + cleanup (every 15 mins)
+    // ─────────────────────────────────────────────
     private void checkMemoryAndClean() {
         try {
             long usedMB = getOsUsedMemoryMB();
 
             if (usedMB == -1) {
-                // OS check failed, fallback to JVM check just in case
                 Runtime rt = Runtime.getRuntime();
                 usedMB = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
                 AppLogger.log("[MemoryWatchdog] OS check failed. Fallback to JVM heap used: " + usedMB + " MB");
             }
 
-            // ALWAYS Step 1: Force GC and finalization of native objects (VLC/JNA)
+            // Step 1: Force GC and finalization of native objects (VLC/JNA)
             System.gc();
             System.runFinalization();
 
-            // ALWAYS Step 2: Clean temp files (play_*.mp3)
+            // Step 2: Clean temp files (play_*.mp3)
             cleanTempFiles();
 
-            // ALWAYS Step 3: Call registered cleanup callbacks (ImageCache, etc.)
+            // Step 3: Call registered cleanup callbacks (ImageCache, etc.)
             for (Runnable callback : cleanupCallbacks) {
                 try {
                     callback.run();
                 } catch (Exception e) {
-                    AppLogger.log("[MemoryWatchdog] Error in callback: " + e.getMessage());
+                    AppLogger.log("[MemoryWatchdog] Error in cleanup callback: " + e.getMessage());
                 }
             }
 
-            // ALWAYS Step 4: Force GC again after cleanup
+            // Step 4: Force GC again after cleanup
             System.gc();
             System.runFinalization();
 
             if (usedMB > THRESHOLD_MB) {
-                AppLogger.log("[MemoryWatchdog] ⚠️ THRESHOLD EXCEEDED: " + usedMB + " MB used (OS-level)");
+                AppLogger.log(
+                        "[MemoryWatchdog] ⚠️ THRESHOLD EXCEEDED: " + usedMB + " MB used (OS-level). Cleanup executed.");
 
-                // Wait for a second to allow OS to reclaim memory
-                try { Thread.sleep(1000); } catch (Exception ignored) {}
+                try {
+                    Thread.sleep(1000);
+                } catch (Exception ignored) {
+                }
 
-                // Log result after cleanup
                 long afterMB = getOsUsedMemoryMB();
-                AppLogger.log("[MemoryWatchdog] ✅ CLEANUP DONE: " + usedMB + " MB -> " + afterMB + " MB (OS-level)");
-                
-                // Trigger restart if still above restart threshold
-                if (afterMB > RESTART_THRESHOLD_MB && !restartTriggered) {
-                    AppLogger.log("[MemoryWatchdog] 🚨 RESTART THRESHOLD EXCEEDED after cleanup. Triggering restart...");
-                    triggerSelfRestart();
-                }
+                AppLogger.log("[MemoryWatchdog] ✅ After cleanup: " + usedMB + " MB → " + afterMB + " MB (OS-level).");
             } else {
-                AppLogger.log("[MemoryWatchdog] ✅ OK: " + usedMB + " MB used (Threshold: " + THRESHOLD_MB + " MB). JVM Cleanup executed.");
+                AppLogger.log("[MemoryWatchdog] ✅ OK: " + usedMB + " MB used (Threshold: " + THRESHOLD_MB
+                        + " MB). JVM Cleanup executed.");
             }
 
         } catch (Exception e) {
-            AppLogger.log("[MemoryWatchdog] Error during check: " + e.getMessage());
+            AppLogger.log("[MemoryWatchdog] Error during memory check: " + e.getMessage());
         }
     }
 
-    private long getOsUsedMemoryMB() {
-        Process p = null;
-        try {
-            // Using free -m command for linux/raspberry pi
-            ProcessBuilder pb = new ProcessBuilder("free", "-m");
-            p = pb.start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.startsWith("Mem:")) {
-                        // Line format: Mem: total used free shared buff/cache available
-                        String[] parts = line.trim().split("\\s+");
-                        if (parts.length >= 3) {
-                            return Long.parseLong(parts[2]);
-                        }
-                    }
-                }
-            }
-            // Drain error stream just in case
-            try (BufferedReader errReader = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
-                while (errReader.readLine() != null) {}
-            }
-            p.waitFor();
-        } catch (Exception e) {
-            AppLogger.log("[MemoryWatchdog] Failed to get OS memory: " + e.getMessage());
-        } finally {
-            if (p != null) {
-                p.destroy();
-            }
-        }
-        return -1;
-    }
-
+    // ─────────────────────────────────────────────
+    // ✅ Trigger self-restart via shell script
+    // ─────────────────────────────────────────────
     private void triggerSelfRestart() {
-        if (restartTriggered) return;
+        if (restartTriggered) {
+            AppLogger.log("[MemoryWatchdog] Restart already triggered, skipping duplicate call.");
+            return;
+        }
         restartTriggered = true;
-        
-        AppLogger.log("[MemoryWatchdog] Triggering auto-restart...");
-        
-        // Call pre-restart callbacks to save state
+
+        AppLogger.log("[MemoryWatchdog] 🔄 Triggering auto-restart...");
+
+        // Call pre-restart callbacks (save state, close DB connections, etc.)
         for (Runnable callback : preRestartCallbacks) {
             try {
                 callback.run();
@@ -192,17 +222,18 @@ public class MemoryWatchdog {
                 AppLogger.log("[MemoryWatchdog] Error in pre-restart callback: " + e.getMessage());
             }
         }
-        
+
         try {
-            // Check multiple possible locations for restart script
             String[] possiblePaths = {
-                System.getProperty("user.home") + File.separator + "scamusica" + File.separator + "restart_scamusica.sh",
-                System.getProperty("user.dir") + File.separator + "scripts" + File.separator + "restart_scamusica.sh",
-                System.getProperty("user.dir") + File.separator + "restart_scamusica.sh",
-                "/opt/scamusica/bin/restart_scamusica.sh",
-                "/opt/scamusica/lib/app/restart_scamusica.sh"
+                    System.getProperty("user.home") + File.separator + "scamusica" + File.separator
+                            + "restart_scamusica.sh",
+                    System.getProperty("user.dir") + File.separator + "scripts" + File.separator
+                            + "restart_scamusica.sh",
+                    System.getProperty("user.dir") + File.separator + "restart_scamusica.sh",
+                    "/opt/scamusica/bin/restart_scamusica.sh",
+                    "/opt/scamusica/lib/app/restart_scamusica.sh"
             };
-            
+
             File scriptFile = null;
             for (String path : possiblePaths) {
                 File f = new File(path);
@@ -211,32 +242,74 @@ public class MemoryWatchdog {
                     break;
                 }
             }
-            
+
             if (scriptFile != null) {
                 AppLogger.log("[MemoryWatchdog] Launching restart script: " + scriptFile.getAbsolutePath());
                 new ProcessBuilder(scriptFile.getAbsolutePath()).start();
             } else {
-                AppLogger.log("[MemoryWatchdog] Restart script not found or not executable. Checked locations including: " + possiblePaths[0] + ". Relying on systemd Restart=always if configured.");
+                AppLogger.log("[MemoryWatchdog] ⚠️ Restart script not found or not executable. "
+                        + "Checked: " + String.join(", ", possiblePaths)
+                        + ". Relying on systemd Restart=always if configured.");
             }
         } catch (Exception e) {
             AppLogger.log("[MemoryWatchdog] Failed to launch restart script: " + e.getMessage());
         }
-        
-        // Wait briefly to allow script to start, then exit
+
+        // Exit JVM after 3s to allow script to start
         new Thread(() -> {
-            try { Thread.sleep(3000); } catch (Exception ignored) {}
-            AppLogger.log("[MemoryWatchdog] Exiting JVM now.");
+            try {
+                Thread.sleep(3000);
+            } catch (Exception ignored) {
+            }
+            AppLogger.log("[MemoryWatchdog] Exiting JVM now for restart.");
             AppLogger.close();
             System.exit(0);
-        }).start();
+        }, "Watchdog-Restart-Thread").start();
     }
 
+    // ─────────────────────────────────────────────
+    // OS RAM check via `free -m`
+    // ─────────────────────────────────────────────
+    private long getOsUsedMemoryMB() {
+        Process p = null;
+        try {
+            ProcessBuilder pb = new ProcessBuilder("free", "-m");
+            p = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("Mem:")) {
+                        // Format: Mem: total used free shared buff/cache available
+                        String[] parts = line.trim().split("\\s+");
+                        if (parts.length >= 3) {
+                            return Long.parseLong(parts[2]);
+                        }
+                    }
+                }
+            }
+            try (BufferedReader errReader = new BufferedReader(new InputStreamReader(p.getErrorStream()))) {
+                while (errReader.readLine() != null) {
+                }
+            }
+            p.waitFor();
+        } catch (Exception e) {
+            AppLogger.log("[MemoryWatchdog] Failed to get OS memory: " + e.getMessage());
+        } finally {
+            if (p != null)
+                p.destroy();
+        }
+        return -1;
+    }
+
+    // ─────────────────────────────────────────────
+    // Clean temp play_*.mp3 files
+    // ─────────────────────────────────────────────
     private void cleanTempFiles() {
         try {
             File tempDir = new File(System.getProperty("user.home")
                     + File.separator + ".scamusica"
                     + File.separator + "temp");
-                    
+
             if (tempDir.exists() && tempDir.isDirectory()) {
                 File[] files = tempDir.listFiles();
                 int deletedCount = 0;
@@ -245,14 +318,14 @@ public class MemoryWatchdog {
                     for (File f : files) {
                         if (f.getName().startsWith("play_") && f.getName().endsWith(".mp3")) {
                             freedBytes += f.length();
-                            if (f.delete()) {
+                            if (f.delete())
                                 deletedCount++;
-                            }
                         }
                     }
                 }
                 if (deletedCount > 0) {
-                    AppLogger.log("[MemoryWatchdog] Cleaned " + deletedCount + " temp files, freed ~" + (freedBytes / (1024 * 1024)) + " MB");
+                    AppLogger.log("[MemoryWatchdog] Cleaned " + deletedCount
+                            + " temp files, freed ~" + (freedBytes / (1024 * 1024)) + " MB");
                 }
             }
         } catch (Exception e) {
@@ -260,44 +333,49 @@ public class MemoryWatchdog {
         }
     }
 
+    // ─────────────────────────────────────────────
+    // Clear OS page cache (every 1 hour)
+    // ─────────────────────────────────────────────
     private void clearOsPageCache() {
         Process syncProc = null;
         Process dropProc = null;
         try {
-            AppLogger.log("[MemoryWatchdog] Running scheduled clear OS page cache...");
-            // First run 'sync' to write any pending data to SD Card
+            AppLogger.log("[MemoryWatchdog] Running scheduled OS page cache clear...");
+
             syncProc = new ProcessBuilder("sync").start();
-            // Drain streams
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(syncProc.getInputStream()));
-                 BufferedReader errReader = new BufferedReader(new InputStreamReader(syncProc.getErrorStream()))) {
-                while (reader.readLine() != null) {}
-                while (errReader.readLine() != null) {}
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(syncProc.getInputStream()));
+                    BufferedReader e = new BufferedReader(new InputStreamReader(syncProc.getErrorStream()))) {
+                while (r.readLine() != null) {
+                }
+                while (e.readLine() != null) {
+                }
             }
             syncProc.waitFor();
-            
-            // Then drop caches (requires sudo without password on Raspberry Pi)
+
             ProcessBuilder pb = new ProcessBuilder("sudo", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches");
             dropProc = pb.start();
-            
-            // Drain streams
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(dropProc.getInputStream()));
-                 BufferedReader errReader = new BufferedReader(new InputStreamReader(dropProc.getErrorStream()))) {
-                while (reader.readLine() != null) {}
-                while (errReader.readLine() != null) {}
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(dropProc.getInputStream()));
+                    BufferedReader e = new BufferedReader(new InputStreamReader(dropProc.getErrorStream()))) {
+                while (r.readLine() != null) {
+                }
+                while (e.readLine() != null) {
+                }
             }
-            
+
             int exitCode = dropProc.waitFor();
-            
             if (exitCode == 0) {
-                AppLogger.log("[MemoryWatchdog] ✅ OS buff/cache cleared successfully via sysctl.");
+                AppLogger.log("[MemoryWatchdog] ✅ OS buff/cache cleared successfully.");
             } else {
-                AppLogger.log("[MemoryWatchdog] ⚠️ Could not clear OS buff/cache. Exit code: " + exitCode + " (sudo required)");
+                AppLogger.log("[MemoryWatchdog] ⚠️ Could not clear OS buff/cache. Exit code: " + exitCode
+                        + " (sudo required?)");
             }
         } catch (Exception e) {
             AppLogger.log("[MemoryWatchdog] Failed to clear OS buff/cache: " + e.getMessage());
         } finally {
-            if (syncProc != null) syncProc.destroy();
-            if (dropProc != null) dropProc.destroy();
+            if (syncProc != null)
+                syncProc.destroy();
+            if (dropProc != null)
+                dropProc.destroy();
         }
     }
 }
