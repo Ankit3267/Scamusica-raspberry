@@ -15,16 +15,17 @@ for pattern in 'com.musicplayer.scamusica.Main' 'Scamusica' 'scamusica.jar'; do
 done
 sleep 3
 
-export DISPLAY=:0
-export XAUTHORITY=/home/pi/.Xauthority
+# Preserve inherited environments (like Wayland or other Display configurations) or default to standard X11 settings
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-/home/pi/.Xauthority}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Launching wrapper..." >> "$LOG_FILE"
 
 if [ -x "/opt/scamusica/lib/app/scamusica_wrapper.sh" ]; then
-    nohup /opt/scamusica/lib/app/scamusica_wrapper.sh > /dev/null 2>&1 &
+    nohup /opt/scamusica/lib/app/scamusica_wrapper.sh >> "$LOG_FILE" 2>&1 &
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Launched via wrapper" >> "$LOG_FILE"
 elif [ -x "/opt/scamusica/bin/Scamusica" ]; then
-    nohup /opt/scamusica/bin/Scamusica > /dev/null 2>&1 &
+    nohup /opt/scamusica/bin/Scamusica >> "$LOG_FILE" 2>&1 &
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Launched binary" >> "$LOG_FILE"
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ No launcher found!" >> "$LOG_FILE"
