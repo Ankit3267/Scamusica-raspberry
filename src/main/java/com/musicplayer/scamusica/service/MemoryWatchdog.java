@@ -21,11 +21,11 @@ public class MemoryWatchdog {
     private ScheduledExecutorService cacheClearScheduler;
     private volatile boolean running = false;
 
-    // Cleanup threshold — triggers GC + callbacks (1.1 GB)
-    private static final int THRESHOLD_MB = 1100;
+    // Cleanup threshold — triggers GC + callbacks (2.0 GB)
+    private static final int THRESHOLD_MB = 2000;
 
-    // Restart threshold — if RAM is above this at midnight, restart (3 GB)
-    private static final int RESTART_THRESHOLD_MB = 3000;
+    // Restart threshold — if RAM is above this at midnight, restart (3.5 GB)
+    private static final int RESTART_THRESHOLD_MB = 3500;
 
     // ✅ Flag to prevent multiple restarts in same session
     private volatile boolean restartTriggered = false;
@@ -79,9 +79,9 @@ public class MemoryWatchdog {
             return t;
         });
 
-        // Run memory check + cleanup every 15 minutes
-        scheduler.scheduleAtFixedRate(this::checkMemoryAndClean, 15, 15, TimeUnit.MINUTES);
-        AppLogger.log("[MemoryWatchdog] Started. Memory check every 15 mins. "
+        // Run memory check + cleanup every 1 hour
+        scheduler.scheduleAtFixedRate(this::checkMemoryAndClean, 60, 60, TimeUnit.MINUTES);
+        AppLogger.log("[MemoryWatchdog] Started. Memory check every 1 hour. "
                 + "Cleanup threshold: " + THRESHOLD_MB + " MB. "
                 + "Restart threshold: " + RESTART_THRESHOLD_MB + " MB (at midnight).");
 

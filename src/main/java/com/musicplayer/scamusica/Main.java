@@ -282,11 +282,13 @@ public class Main extends Application {
         // ✅ TESTING ONLY — 30 seconds baad JNA error simulate hoga
         // GitHub Actions se build karo, Pi pe deploy karo, 30 sec wait karo
         // Restart hone ke baad yeh line hata do
+        /*
         new Thread(() -> {
             try { Thread.sleep(30000); } catch (Exception e) {}
             System.err.println("Exception in thread \"media-events\" JNA: error handling callback exception");
             System.err.println("JNA: failed to create structure");
         }, "media-events").start();
+        */
 
         // ✅ Catch exceptions thrown on the JavaFX Application Thread (FX thread errors
         // are NOT caught by Thread.setDefaultUncaughtExceptionHandler)
