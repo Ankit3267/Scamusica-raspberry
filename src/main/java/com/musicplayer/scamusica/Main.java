@@ -97,6 +97,11 @@ public class Main extends Application {
      * 1. Try restart_scamusica.sh script (full cleanup + relaunch)
      * 2. Try direct relaunch of /opt/scamusica/bin/Scamusica (fallback)
      * 3. Rely on systemd Restart=always (last resort)
+     *
+     * IMPORTANT: All child processes are launched fully detached using
+     * "nohup ... &" via bash -c, with IO redirected to /dev/null.
+     * This prevents SIGPIPE from killing the restart process when
+     * the parent JVM exits via System.exit(1).
      */
     static void handleJnaErrorAndRestart(String source, Throwable throwable) {
         if (restartInitiated)
@@ -122,7 +127,7 @@ public class Main extends Application {
 
         boolean relaunchScheduled = false;
 
-        // ✅ Strategy 1: Find and launch restart script
+        // ✅ Strategy 1: Find and launch restart script (FULLY DETACHED)
         try {
             String[] possibleScriptPaths = {
                     System.getProperty("user.home") + File.separator + "scamusica" + File.separator
@@ -137,8 +142,15 @@ public class Main extends Application {
             for (String path : possibleScriptPaths) {
                 File f = new File(path);
                 if (f.exists() && f.canExecute()) {
-                    AppLogger.log("[" + source + "] ✅ Launching restart script: " + f.getAbsolutePath());
-                    new ProcessBuilder(f.getAbsolutePath()).start();
+                    AppLogger.log("[" + source + "] ✅ Launching restart script (detached): " + f.getAbsolutePath());
+                    // ✅ KEY FIX: Launch fully detached with nohup + & + IO redirect
+                    // Without this, script dies from SIGPIPE when parent JVM exits
+                    ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+                            "nohup " + f.getAbsolutePath() + " > /dev/null 2>&1 &");
+                    pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+                    pb.redirectOutput(ProcessBuilder.Redirect.appendTo(new File("/dev/null")));
+                    pb.redirectErrorStream(true);
+                    pb.start();
                     relaunchScheduled = true;
                     break;
                 }
@@ -151,7 +163,7 @@ public class Main extends Application {
             AppLogger.log("[" + source + "] Failed to launch restart script: " + e.getMessage());
         }
 
-        // ✅ Strategy 2: Direct relaunch of the app binary
+        // ✅ Strategy 2: Direct relaunch of the app binary (FULLY DETACHED)
         if (!relaunchScheduled) {
             try {
                 String[] possibleAppPaths = {
@@ -162,9 +174,11 @@ public class Main extends Application {
                 for (String path : possibleAppPaths) {
                     File f = new File(path);
                     if (f.exists() && f.canExecute()) {
-                        AppLogger.log("[" + source + "] ✅ Direct relaunch via: " + f.getAbsolutePath());
+                        AppLogger.log("[" + source + "] ✅ Direct relaunch (detached) via: " + f.getAbsolutePath());
                         ProcessBuilder pb = new ProcessBuilder("bash", "-c",
-                                "sleep 5 && DISPLAY=:0 " + f.getAbsolutePath() + " &");
+                                "sleep 5 && nohup env DISPLAY=:0 " + f.getAbsolutePath() + " > /dev/null 2>&1 &");
+                        pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+                        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(new File("/dev/null")));
                         pb.redirectErrorStream(true);
                         pb.start();
                         relaunchScheduled = true;
