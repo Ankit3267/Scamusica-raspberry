@@ -179,4 +179,55 @@ public class OfflineCache {
             return new ArrayList<>();
         }
     }
+
+    public static void saveVolumeSettings(com.musicplayer.scamusica.model.VolumeSettings settings) {
+        try {
+            File file = new File(getCacheDir(), "volume_settings.json");
+            String json = GSON.toJson(settings);
+            Files.write(file.toPath(), json.getBytes(StandardCharsets.UTF_8));
+            AppLogger.log("[OfflineCache] Volume settings saved.");
+        } catch (Exception e) {
+            AppLogger.log("[OfflineCache] Failed to save volume settings: " + e.getMessage());
+        }
+    }
+
+    public static com.musicplayer.scamusica.model.VolumeSettings loadVolumeSettings() {
+        try {
+            File file = new File(getCacheDir(), "volume_settings.json");
+            if (!file.exists()) {
+                AppLogger.log("[OfflineCache] No cached volume settings found.");
+                return null;
+            }
+            String json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+            com.musicplayer.scamusica.model.VolumeSettings settings = GSON.fromJson(json, com.musicplayer.scamusica.model.VolumeSettings.class);
+            AppLogger.log("[OfflineCache] Volume settings loaded.");
+            return settings;
+        } catch (Exception e) {
+            AppLogger.log("[OfflineCache] Failed to load volume settings: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Removes cached tracks and download sequence JSON files for a given sequence.
+     */
+    public static void removeSequenceCache(String sequenceName) {
+        try {
+            String safeName = safeFileName(sequenceName);
+
+            File tracksFile = new File(getCacheDir(), TRACKS_PREFIX + safeName + ".json");
+            if (tracksFile.exists()) {
+                tracksFile.delete();
+                AppLogger.log("[OfflineCache] Removed cached tracks for: " + sequenceName);
+            }
+
+            File seqFile = new File(getCacheDir(), SEQ_PREFIX + safeName + ".json");
+            if (seqFile.exists()) {
+                seqFile.delete();
+                AppLogger.log("[OfflineCache] Removed cached download sequence for: " + sequenceName);
+            }
+        } catch (Exception e) {
+            AppLogger.log("[OfflineCache] Failed to remove cache for: " + sequenceName + " - " + e.getMessage());
+        }
+    }
 }

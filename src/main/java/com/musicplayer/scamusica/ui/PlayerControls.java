@@ -67,30 +67,30 @@ public class PlayerControls {
         dislikeBtn.getStyleClass().add("control-icon");
         dislikeBtn.getStyleClass().add("small-control");
 
-        FontIcon likeIcon = new FontIcon("fas-thumbs-up");
-        likeIcon.setIconSize(32);
-        Button likeBtn = new Button("", likeIcon);
-        likeBtn.getStyleClass().add("control-icon");
-        likeBtn.getStyleClass().add("small-control");
+//        FontIcon likeIcon = new FontIcon("fas-thumbs-up");
+//        likeIcon.setIconSize(32);
+//        Button likeBtn = new Button("", likeIcon);
+//        likeBtn.getStyleClass().add("control-icon");
+//        likeBtn.getStyleClass().add("small-control");
 
-        FontIcon bigPlayIcon = new FontIcon("fas-play");
-        bigPlayIcon.setIconSize(35);
-        bigPlayIcon.setIconColor(Color.web("#fff"));
-        Button bigPlayBtn = new Button("", bigPlayIcon);
-        bigPlayBtn.setGraphic(bigPlayIcon);
-
-        bigPlayBtn.setMinSize(80, 80);
-        bigPlayBtn.setPrefSize(80, 80);
-        bigPlayBtn.setMaxSize(80, 80);
-        bigPlayBtn.setPadding(new Insets(0, -2, 0, 0));
-        bigPlayBtn.setStyle(
-                "-fx-background-color: #6E68A5; " +
-                        "-fx-text-fill: white;" +
-                        "-fx-background-radius: 999px; " +
-                        "-fx-effect: dropshadow(gaussian, rgba(126,97,204,0.28), 22, 0, 0, 8); " +
-                        "-fx-alignment: center;"
-        );
-        bigPlayBtn.getStyleClass().add("big-play-button");
+//        FontIcon bigPlayIcon = new FontIcon("fas-play");
+//        bigPlayIcon.setIconSize(35);
+//        bigPlayIcon.setIconColor(Color.web("#fff"));
+//        Button bigPlayBtn = new Button("", bigPlayIcon);
+//        bigPlayBtn.setGraphic(bigPlayIcon);
+//
+//        bigPlayBtn.setMinSize(80, 80);
+//        bigPlayBtn.setPrefSize(80, 80);
+//        bigPlayBtn.setMaxSize(80, 80);
+//        bigPlayBtn.setPadding(new Insets(0, -2, 0, 0));
+//        bigPlayBtn.setStyle(
+//                "-fx-background-color: #6E68A5; " +
+//                        "-fx-text-fill: white;" +
+//                        "-fx-background-radius: 999px; " +
+//                        "-fx-effect: dropshadow(gaussian, rgba(126,97,204,0.28), 22, 0, 0, 8); " +
+//                        "-fx-alignment: center;"
+//        );
+//        bigPlayBtn.getStyleClass().add("big-play-button");
 
         FontIcon forwardIcon = new FontIcon("fas-forward");
         forwardIcon.setIconSize(26);
@@ -100,27 +100,27 @@ public class PlayerControls {
         forwardBtn.getStyleClass().add("small-control");
 
         dislikeBtn.setPrefSize(46, 46);
-        likeBtn.setPrefSize(46, 46);
+//        likeBtn.setPrefSize(46, 46);
         forwardBtn.setPrefSize(46, 46);
 
         dislikeBtn.setPadding(new Insets(0));
-        likeBtn.setPadding(new Insets(0));
+//        likeBtn.setPadding(new Insets(0));
         forwardBtn.setPadding(new Insets(0));
 
         HBox likeDislikeBox = new HBox();
         likeDislikeBox.getStyleClass().add("small-control-box");
         likeDislikeBox.setAlignment(javafx.geometry.Pos.CENTER);
         likeDislikeBox.setSpacing(4);
-        likeDislikeBox.getChildren().addAll(dislikeBtn, likeBtn);
+        likeDislikeBox.getChildren().addAll(dislikeBtn/*, likeBtn*/);
 
-        StackPane playContainer = new StackPane();
-        playContainer.getStyleClass().add("play-control-box");
-        playContainer.setMinSize(100, 100);
-        playContainer.setPrefSize(120, 100);
-        playContainer.setMaxSize(160, 100);
-        playContainer.setAlignment(javafx.geometry.Pos.CENTER);
-        playContainer.setPadding(new Insets(0, 4, 0, 4));
-        playContainer.getChildren().add(bigPlayBtn);
+//        StackPane playContainer = new StackPane();
+//        playContainer.getStyleClass().add("play-control-box");
+//        playContainer.setMinSize(100, 100);
+//        playContainer.setPrefSize(120, 100);
+//        playContainer.setMaxSize(160, 100);
+//        playContainer.setAlignment(javafx.geometry.Pos.CENTER);
+//        playContainer.setPadding(new Insets(0, 4, 0, 4));
+//        playContainer.getChildren().add(bigPlayBtn);
 
         HBox forwardBox = new HBox();
         forwardBox.getStyleClass().add("forward-control-box");
@@ -132,24 +132,25 @@ public class PlayerControls {
         controlsWrapper.setAlignment(javafx.geometry.Pos.CENTER);
         controlsWrapper.setSpacing(14);
         controlsWrapper.setPadding(new Insets(6, 0, 6, 0));
-        controlsWrapper.getChildren().addAll(likeDislikeBox, playContainer, forwardBox);
+//        controlsWrapper.getChildren().addAll(likeDislikeBox, playContainer, forwardBox);
+        controlsWrapper.getChildren().addAll(likeDislikeBox, forwardBox);
 
         dislikeBtn.setOnAction(e -> {
             if (dislikeBtn.getStyleClass().contains("control-active"))
                 dislikeBtn.getStyleClass().remove("control-active");
             else {
                 dislikeBtn.getStyleClass().add("control-active");
-                likeBtn.getStyleClass().remove("control-active");
+//                likeBtn.getStyleClass().remove("control-active");
             }
         });
 
-        likeBtn.setOnAction(e -> {
-            if (likeBtn.getStyleClass().contains("control-active")) likeBtn.getStyleClass().remove("control-active");
-            else {
-                likeBtn.getStyleClass().add("control-active");
-                dislikeBtn.getStyleClass().remove("control-active");
-            }
-        });
+//        likeBtn.setOnAction(e -> {
+//            if (likeBtn.getStyleClass().contains("control-active")) likeBtn.getStyleClass().remove("control-active");
+//            else {
+//                likeBtn.getStyleClass().add("control-active");
+//                dislikeBtn.getStyleClass().remove("control-active");
+//            }
+//        });
 
         forwardBtn.setOnAction(e -> {
             forwardBtn.getStyleClass().add("control-active");
@@ -181,6 +182,48 @@ public class PlayerControls {
         volumeSlider.setMinWidth(60);
         volumeSlider.setMaxWidth(260);
         volumeSlider.getStyleClass().add("volume-slider");
+
+        Label volumeLabel = new Label();
+        volumeLabel.setStyle("-fx-text-fill: black; -fx-font-size: 10px; -fx-font-weight: bold;");
+        volumeLabel.setMouseTransparent(true);
+        volumeLabel.textProperty().bind(
+                Bindings.createStringBinding(
+                        () -> String.format("%d%%", (int) volumeSlider.getValue()),
+                        volumeSlider.valueProperty()
+                )
+        );
+
+        Pane labelPane = new Pane(volumeLabel);
+        labelPane.setMouseTransparent(true);
+        labelPane.setPrefHeight(15);
+        volumeLabel.translateXProperty().bind(
+                Bindings.createDoubleBinding(
+                        () -> {
+                            double w = volumeSlider.getWidth();
+                            if (w <= 0) w = volumeSlider.getPrefWidth();
+                            double val = volumeSlider.getValue();
+                            double max = volumeSlider.getMax();
+                            if (max <= 0) max = 100;
+                            double fraction = val / max;
+                            
+                            double labelW = volumeLabel.getWidth();
+                            if (labelW <= 0) labelW = 20;
+                            
+                            double thumbW = 14; 
+                            double trackLength = w - thumbW;
+                            
+                            double centerPos = (thumbW / 2.0) + (trackLength * fraction);
+                            return centerPos - (labelW / 2.0);
+                        },
+                        volumeSlider.valueProperty(),
+                        volumeSlider.widthProperty(),
+                        volumeLabel.widthProperty()
+                )
+        );
+
+        VBox volumeBox = new VBox(0, volumeSlider, labelPane);
+        volumeBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
         FontIcon volHigh = new FontIcon("fas-volume-up");
         volHigh.setIconSize(14);
         volHigh.getStyleClass().add("volume-icon");
@@ -188,7 +231,7 @@ public class PlayerControls {
         HBox.setHgrow(hSpacer, Priority.ALWAYS);
         hSpacer.setMouseTransparent(true);
 
-        HBox bottomBar = new HBox(12, downloadLabel, hSpacer, volLow, volumeSlider, volHigh);
+        HBox bottomBar = new HBox(12, downloadLabel, hSpacer, volLow, volumeBox, volHigh);
         bottomBar.getStyleClass().add("bottom-bar");
         bottomBar.setPadding(new Insets(0, 24, 0, 24));
         bottomBar.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
@@ -338,52 +381,53 @@ public class PlayerControls {
             }
         });
 
-        Button bigPlayBtn = (Button) ((StackPane) controlsWrapper.getChildren().get(1)).getChildren().get(0);
-        FontIcon bigIcon = (FontIcon) bigPlayBtn.getGraphic();
-
-        bigPlayBtn.setOnAction(e -> {
-            boolean hasDuration = (durationSeconds != null && durationSeconds > 0);
-            double curSec = mediaPlayer != null ? mediaPlayer.getCurrentTime().toSeconds() : 0.0;
-            boolean atEnd = hasDuration && curSec >= durationSeconds - 0.05;
-
-            if (mediaPlayer != null && atEnd) {
-                try {
-                    mediaPlayer.pause();
-                    mediaPlayer.seek(Duration.ZERO);
-                } catch (Exception ignored) {
-                }
-                progressSlider.setValue(0);
-
-                updateTimeLabel(leftTime, Duration.ZERO, false);
-                if (hasDuration) {
-                    updateTimeLabel(rightTime, Duration.seconds(durationSeconds), true);
-                }
-
-                if (downloadLabel != null) {
-                    downloadLabel.textProperty().bind(
-                            Bindings.concat(
-                                    "0%",
-                                    " ",
-                                    LanguageManager.createStringBinding("label.download")
-                            ));
-                }
-            }
-
-            if (mediaPlayer == null) return;
-
-            MediaPlayer.Status status = mediaPlayer.getStatus();
-            if (status == MediaPlayer.Status.PLAYING) {
-                mediaPlayer.pause();
-                bigIcon.setIconLiteral("fas-play");
-                bigIcon.setIconColor(Color.WHITE);
-            } else {
-                mediaPlayer.play();
-                bigIcon.setIconLiteral("fas-pause");
-                bigIcon.setIconColor(Color.WHITE);
-            }
-        });
-
-        Button forwardBtn = (Button) ((HBox) controlsWrapper.getChildren().get(2)).getChildren().get(0);
+//        Button bigPlayBtn = (Button) ((StackPane) controlsWrapper.getChildren().get(1)).getChildren().get(0);
+//        FontIcon bigIcon = (FontIcon) bigPlayBtn.getGraphic();
+//
+//        bigPlayBtn.setOnAction(e -> {
+//            boolean hasDuration = (durationSeconds != null && durationSeconds > 0);
+//            double curSec = mediaPlayer != null ? mediaPlayer.getCurrentTime().toSeconds() : 0.0;
+//            boolean atEnd = hasDuration && curSec >= durationSeconds - 0.05;
+//
+//            if (mediaPlayer != null && atEnd) {
+//                try {
+//                    mediaPlayer.pause();
+//                    mediaPlayer.seek(Duration.ZERO);
+//                } catch (Exception ignored) {
+//                }
+//                progressSlider.setValue(0);
+//
+//                updateTimeLabel(leftTime, Duration.ZERO, false);
+//                if (hasDuration) {
+//                    updateTimeLabel(rightTime, Duration.seconds(durationSeconds), true);
+//                }
+//
+//                if (downloadLabel != null) {
+//                    downloadLabel.textProperty().bind(
+//                            Bindings.concat(
+//                                    "0%",
+//                                    " ",
+//                                    LanguageManager.createStringBinding("label.download")
+//                            ));
+//                }
+//            }
+//
+//            if (mediaPlayer == null) return;
+//
+//            MediaPlayer.Status status = mediaPlayer.getStatus();
+//            if (status == MediaPlayer.Status.PLAYING) {
+//                mediaPlayer.pause();
+//                bigIcon.setIconLiteral("fas-play");
+//                bigIcon.setIconColor(Color.WHITE);
+//            } else {
+//                mediaPlayer.play();
+//                bigIcon.setIconLiteral("fas-pause");
+//                bigIcon.setIconColor(Color.WHITE);
+//            }
+//        });
+//
+//        Button forwardBtn = (Button) ((HBox) controlsWrapper.getChildren().get(2)).getChildren().get(0);
+        Button forwardBtn = (Button) ((HBox) controlsWrapper.getChildren().get(1)).getChildren().get(0);
         forwardBtn.setOnAction(e -> {
             if (mediaPlayer == null) return;
             try {
@@ -425,18 +469,18 @@ public class PlayerControls {
     }
 
     public void setupBigPlayButtonDummy(HBox controlsWrapper) {
-        Button bigPlayBtn = (Button) ((StackPane) controlsWrapper.getChildren().get(1)).getChildren().get(0);
-        bigPlayBtn.setOnAction(e -> {
-            FontIcon bigIcon = (FontIcon) bigPlayBtn.getGraphic();
-            String cur = bigIcon.getIconLiteral();
-            if ("fas-play".equals(cur) || cur == null) {
-                bigIcon.setIconLiteral("fas-pause");
-                bigIcon.setIconColor(Color.WHITE);
-            } else {
-                bigIcon.setIconLiteral("fas-play");
-                bigIcon.setIconColor(Color.WHITE);
-            }
-        });
+//        Button bigPlayBtn = (Button) ((StackPane) controlsWrapper.getChildren().get(1)).getChildren().get(0);
+//        bigPlayBtn.setOnAction(e -> {
+//            FontIcon bigIcon = (FontIcon) bigPlayBtn.getGraphic();
+//            String cur = bigIcon.getIconLiteral();
+//            if ("fas-play".equals(cur) || cur == null) {
+//                bigIcon.setIconLiteral("fas-pause");
+//                bigIcon.setIconColor(Color.WHITE);
+//            } else {
+//                bigIcon.setIconLiteral("fas-play");
+//                bigIcon.setIconColor(Color.WHITE);
+//            }
+//        });
     }
 
     public void setupDummySlider(Slider progressSlider, Label leftTime, Label rightTime, int duration) {
@@ -467,6 +511,11 @@ public class PlayerControls {
     public Slider getVolumeSlider(HBox bottomBar) {
         for (Node n : bottomBar.getChildren()) {
             if (n instanceof Slider) return (Slider) n;
+            if (n instanceof VBox) {
+                for (Node child : ((VBox) n).getChildren()) {
+                    if (child instanceof Slider) return (Slider) child;
+                }
+            }
         }
         return null;
     }
@@ -481,13 +530,14 @@ public class PlayerControls {
     }
 
     public FontIcon getBigPlayIcon(HBox controlsWrapper) {
-        try {
-            Button bigPlayBtn =
-                    (Button) ((StackPane) controlsWrapper.getChildren().get(1))
-                            .getChildren().get(0);
-            return (FontIcon) bigPlayBtn.getGraphic();
-        } catch (Exception e) {
-            return null;
-        }
+//        try {
+//            Button bigPlayBtn =
+//                    (Button) ((StackPane) controlsWrapper.getChildren().get(1))
+//                            .getChildren().get(0);
+//            return (FontIcon) bigPlayBtn.getGraphic();
+//        } catch (Exception e) {
+//            return null;
+//        }
+        return null;
     }
 }

@@ -55,9 +55,9 @@ public class AdScheduler {
 
         scheduler.scheduleAtFixedRate(
                 this::checkAndTriggerAds,
-                0,
-                1,
-                TimeUnit.MINUTES
+                20,
+                60,
+                TimeUnit.SECONDS
         );
     }
 
@@ -124,6 +124,11 @@ public class AdScheduler {
     }
 
     private boolean isAdActive(Ad ad, LocalDate today) {
+        // Skip ads that are not active
+        if (ad.getStatus() == null || !"active".equalsIgnoreCase(ad.getStatus())) {
+            return false;
+        }
+
         if (ad.getStartDate() == null || ad.getEndDate() == null) {
             return false;
         }
@@ -205,10 +210,14 @@ public class AdScheduler {
         }
 
         int intervalMinutes = 0;
-        if (playTimesObj instanceof Integer) {
-            intervalMinutes = (Integer) playTimesObj;
-        } else if (playTimesObj instanceof Double) {
-            intervalMinutes = ((Double) playTimesObj).intValue();
+        if (playTimesObj instanceof Number) {
+            intervalMinutes = ((Number) playTimesObj).intValue();
+        } else if (playTimesObj instanceof String) {
+            try {
+                intervalMinutes = Integer.parseInt((String) playTimesObj);
+            } catch (NumberFormatException e) {
+                return false;
+            }
         } else {
             return false;
         }
@@ -219,17 +228,21 @@ public class AdScheduler {
 
         LocalTime lastPlayed = lastPlayedTime.get(ad.getId());
         if (lastPlayed == null) {
-            int totalMinutes = currentTime.getHour() * 60 + currentTime.getMinute();
-            boolean due = totalMinutes % intervalMinutes == 0;
-            if (due) lastPlayedTime.put(ad.getId(), currentTime);
-            return due;
+            // First time - play immediately
+            AppLogger.log("[AdScheduler] First play for ad ID=" + ad.getId() + ", playing immediately");
+            lastPlayedTime.put(ad.getId(), currentTime.withSecond(0).withNano(0));
+            return true;
         }
 
-        long minutesSinceLast = Duration.between(lastPlayed, currentTime).toMinutes();
-        if (minutesSinceLast < 0) minutesSinceLast += 24 * 60; // midnight crossover handle
+        long secondsSinceLast = Duration.between(lastPlayed, currentTime).getSeconds();
+        if (secondsSinceLast < 0) secondsSinceLast += 24 * 3600; // midnight crossover handle
 
-        boolean due = minutesSinceLast >= intervalMinutes;
-        if (due) lastPlayedTime.put(ad.getId(), currentTime);
+        // Use a 30-second tolerance window to prevent scheduler jitter from skipping minutes
+        boolean due = secondsSinceLast >= (intervalMinutes * 60 - 30);
+        if (due) {
+            // Align to the minute to prevent drift
+            lastPlayedTime.put(ad.getId(), currentTime.withSecond(0).withNano(0));
+        }
         return due;
     }
 

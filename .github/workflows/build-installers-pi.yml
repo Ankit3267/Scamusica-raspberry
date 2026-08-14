@@ -1,6 +1,17 @@
 name: Build Installer (Raspberry Pi 5 ARM64)
 
+# on:
+#   workflow_dispatch:
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - "scripts/**"
+      - ".github/workflows/build-installers-pi.yml"
+
   workflow_dispatch:
 
 env:
@@ -134,41 +145,7 @@ jobs:
           echo "📦 jpackage-input contents:"
           ls -lh target/jpackage-input/
 
-      - name: Copy VLC libs
-        run: |
-          mkdir -p target/jpackage-input/lib/vlc
-          
-          echo "🔍 Detecting VLC paths..."
-          
-          VLC_LIB=$(ldconfig -p | grep libvlc.so | head -1 | awk '{print $NF}')
-          VLC_CORE=$(ldconfig -p | grep libvlccore.so | head -1 | awk '{print $NF}')
-          
-          if [ -z "$VLC_LIB" ] || [ -z "$VLC_CORE" ]; then
-            echo "❌ VLC libs not found!"
-            exit 1
-          fi
-          
-          echo "✅ libvlc: $VLC_LIB"
-          echo "✅ libvlccore: $VLC_CORE"
-          
-          cp "$VLC_LIB" target/jpackage-input/lib/vlc/
-          cp "$VLC_CORE" target/jpackage-input/lib/vlc/
-          
-          VLC_PLUGIN_DIR=$(dirname $VLC_LIB)/vlc/plugins
-          
-          if [ ! -d "$VLC_PLUGIN_DIR" ]; then
-            echo "❌ VLC plugins not found!"
-            exit 1
-          fi
-          
-          echo "✅ plugins: $VLC_PLUGIN_DIR"
-          cp -r $VLC_PLUGIN_DIR target/jpackage-input/lib/vlc/
 
-      - name: Verify VLC bundle
-        run: |
-          echo "🔎 Checking VLC files..."
-          ls -lh target/jpackage-input/lib/vlc
-          ls -lh target/jpackage-input/lib/vlc/plugins | head
 
       - name: Package into DEB
         working-directory: ${{ env.PROJECT_PATH }}
@@ -186,27 +163,123 @@ jobs:
             --main-jar "$JAR_NAME" \
             --main-class com.musicplayer.scamusica.Main \
             --runtime-image target/scamusica-runtime \
+            --icon linux/icons/scamusica.png \
             --linux-shortcut \
             --linux-menu-group Audio \
-            --linux-package-deps "libgtk-3-0,libglib2.0-0,libasound2,libpng16-16,libjpeg62-turbo,libpcre2-8-0,libx11-6,libxext6,libxrender1,libxtst6,libxi6" \
-            --java-options "-Xmx512m -Xms256m -XX:+UseG1GC -XX:MaxHeapFreeRatio=30 -XX:MinHeapFreeRatio=10 -Djna.library.path=\$APPDIR/lib/vlc -DVLC_PLUGIN_PATH=\$APPDIR/lib/vlc/plugins" \
+            --linux-package-deps "libgtk-3-0,libglib2.0-0,libasound2,libpng16-16,libjpeg62-turbo,libpcre2-8-0,libx11-6,libxext6,libxrender1,libxtst6,libxi6,vlc" \
+            --java-options "-Xmx512m -Xms256m -XX:+UseG1GC -XX:MaxHeapFreeRatio=30 -XX:MinHeapFreeRatio=10" \
             --verbose
 
-      # ✅ NEW: Fix scripts in DEB (Critical)
-      - name: Fix scripts in DEB (Critical)
+      # ✅ Ingest Autostart & Upgrade Cleanup Control Scripts into DEB
+      - name: Fix scripts and configure autostart in DEB
         run: |
           DEB_FILE=$(ls target/*.deb | head -1)
           mkdir -p target/deb-extract
           dpkg-deb -R "$DEB_FILE" target/deb-extract
           
           mkdir -p target/deb-extract/opt/scamusica/lib/app
+          mkdir -p target/deb-extract/etc/xdg/autostart
+          mkdir -p target/deb-extract/DEBIAN
           
+          # Copy scripts
           cp scripts/restart_scamusica.sh target/deb-extract/opt/scamusica/lib/app/
           cp scripts/scamusica_wrapper.sh target/deb-extract/opt/scamusica/lib/app/
-          
           chmod +x target/deb-extract/opt/scamusica/lib/app/*.sh
           
-          # Rebuild DEB
+          # Create system-wide desktop autostart file
+          cat << 'EOF' | sed 's/^[ \t]*//' > target/deb-extract/etc/xdg/autostart/scamusica.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Scamusica
+          Comment=Scamusica Music Player Auto Launcher
+          Exec=/opt/scamusica/lib/app/scamusica_wrapper.sh
+          Terminal=false
+          X-GNOME-Autostart-enabled=true
+          EOF
+          chmod 644 target/deb-extract/etc/xdg/autostart/scamusica.desktop
+
+          # Fix the jpackage generated main desktop file to use the wrapper script and valid categories
+          find target/deb-extract -name "scamusica-Scamusica.desktop" -type f | while read df; do
+              sed -i 's|^Exec=.*|Exec=/opt/scamusica/lib/app/scamusica_wrapper.sh|g' "$df"
+              sed -i 's|^Categories=.*|Categories=AudioVideo;Audio;Player;|g' "$df"
+          done
+
+          # Manually place the desktop file in /usr/share/applications so the OS detects it automatically
+          mkdir -p target/deb-extract/usr/share/applications
+          find target/deb-extract -name "scamusica-Scamusica.desktop" -type f -exec cp {} target/deb-extract/usr/share/applications/ \;
+
+          # Create DEBIAN/preinst (runs before package upgrade/install to stop old process & clean stale files)
+          cat << 'EOF' | sed 's/^[ \t]*//' > target/deb-extract/DEBIAN/preinst
+          #!/bin/bash
+          set -e
+
+          echo "🔄 [Scamusica] Pre-install cleanup: Stopping existing instances..."
+          pkill -9 -f "com.musicplayer.scamusica.Main" 2>/dev/null || true
+          pkill -9 -f "scamusica_wrapper.sh" 2>/dev/null || true
+          pkill -9 -f "restart_scamusica.sh" 2>/dev/null || true
+
+          systemctl --user stop scamusica.service 2>/dev/null || true
+
+          exit 0
+          EOF
+          chmod 755 target/deb-extract/DEBIAN/preinst
+
+          # Create DEBIAN/postinst (runs after installation to set permissions)
+          cat << 'EOF' | sed 's/^[ \t]*//' > target/deb-extract/DEBIAN/postinst
+          #!/bin/bash
+          set -e
+
+          echo "⚙️ [Scamusica] Post-install setup..."
+          chmod +x /opt/scamusica/lib/app/*.sh 2>/dev/null || true
+          if [ -f /etc/xdg/autostart/scamusica.desktop ]; then
+              chmod 644 /etc/xdg/autostart/scamusica.desktop
+          fi
+
+          echo "🖥️ [Scamusica] Registering desktop shortcut..."
+          if command -v xdg-desktop-menu >/dev/null 2>&1; then
+              xdg-desktop-menu install --novendor /opt/scamusica/lib/scamusica-Scamusica.desktop 2>/dev/null || true
+          fi
+
+          echo "🖥️ [Scamusica] Placing shortcut on user desktops..."
+          for user_home in /home/*; do
+              if [ -d "$user_home/Desktop" ]; then
+                  cp /usr/share/applications/scamusica-Scamusica.desktop "$user_home/Desktop/scamusica.desktop"
+                  chown $(stat -c '%U:%G' "$user_home") "$user_home/Desktop/scamusica.desktop"
+                  chmod +x "$user_home/Desktop/scamusica.desktop"
+              fi
+          done
+
+          echo "✅ [Scamusica] Installation & system autostart configured successfully."
+          exit 0
+          EOF
+          chmod 755 target/deb-extract/DEBIAN/postinst
+
+          # Create DEBIAN/prerm (runs before removal)
+          cat << 'EOF' | sed 's/^[ \t]*//' > target/deb-extract/DEBIAN/prerm
+          #!/bin/bash
+          set -e
+
+          echo "🧹 [Scamusica] Pre-removal: Stopping running player processes..."
+          pkill -9 -f "com.musicplayer.scamusica.Main" 2>/dev/null || true
+          pkill -9 -f "scamusica_wrapper.sh" 2>/dev/null || true
+
+          echo "🖥️ [Scamusica] Unregistering desktop shortcut..."
+          if command -v xdg-desktop-menu >/dev/null 2>&1; then
+              xdg-desktop-menu uninstall /opt/scamusica/lib/scamusica-Scamusica.desktop 2>/dev/null || true
+          fi
+
+          echo "🧹 [Scamusica] Removing shortcut from user desktops..."
+          for user_home in /home/*; do
+              if [ -f "$user_home/Desktop/scamusica.desktop" ]; then
+                  rm -f "$user_home/Desktop/scamusica.desktop"
+              fi
+          done
+
+          exit 0
+          EOF
+          chmod 755 target/deb-extract/DEBIAN/prerm
+
+          # Rebuild DEB package with automated scripts and autostart configuration
           dpkg-deb -b target/deb-extract "$DEB_FILE"
 
       - name: Verify package architecture

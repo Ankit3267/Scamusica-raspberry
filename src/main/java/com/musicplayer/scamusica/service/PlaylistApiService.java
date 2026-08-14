@@ -15,6 +15,16 @@ public class PlaylistApiService {
 
     private static final String SONGS_URL = Utility.BASE_URL.get() + Utility.API_SONGS_ENDPOINT.get();
 
+    // Cache to prevent multiple identical requests during a sync cycle
+    private JsonObject cachedRootJson = null;
+    private long cacheTimestamp = 0;
+    private static final long CACHE_TTL_MS = 30_000; // 30 seconds
+
+    public void clearCache() {
+        cachedRootJson = null;
+        cacheTimestamp = 0;
+    }
+
     // private JsonObject fetchRootJson() throws Exception {
     // String token = SessionManager.loadToken();
     //
@@ -40,6 +50,11 @@ public class PlaylistApiService {
     // }
 
     private JsonObject fetchRootJson() throws Exception {
+        long now = System.currentTimeMillis();
+        if (cachedRootJson != null && (now - cacheTimestamp) < CACHE_TTL_MS) {
+            return cachedRootJson;
+        }
+
         String token = SessionManager.loadToken();
 
         if (token == null || token.trim().isEmpty()) {
@@ -62,7 +77,10 @@ public class PlaylistApiService {
             throw new IllegalStateException("Empty response from API");
         }
 
-        return JsonParser.parseString(response).getAsJsonObject();
+        JsonObject root = JsonParser.parseString(response).getAsJsonObject();
+        cachedRootJson = root;
+        cacheTimestamp = now;
+        return root;
     }
 
     public List<String> fetchPlaylistTitles() throws Exception {
@@ -96,20 +114,56 @@ public class PlaylistApiService {
 
             System.out.println("[PlaylistApiService] Playlists from API: " + titles);
 
-            if (!titles.isEmpty()) {
-                OfflineCache.savePlaylistTitles(titles);
-            }
+            // Always save to cache (including empty list) to reflect current server state
+            OfflineCache.savePlaylistTitles(titles);
 
             return titles;
 
         } catch (Exception e) {
             AppLogger.log("[PlaylistApiService] fetchPlaylistTitles failed, loading from cache: " + e.getMessage());
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance().addErrorLog(
+                        "API Fetch Error", "fetchPlaylistTitles - " + e.getMessage());
+            } catch (Exception logEx) {}
             List<String> cached = OfflineCache.loadPlaylistTitles();
             if (!cached.isEmpty()) {
                 AppLogger.log("[PlaylistApiService] Using cached titles: " + cached.size());
                 return cached;
             }
             throw e;
+        }
+    }
+
+    public com.musicplayer.scamusica.model.VolumeSettings fetchVolumeSettings() throws Exception {
+        try {
+            JsonObject root = fetchRootJson();
+
+            if (!root.has("data") || !root.get("data").isJsonObject()) {
+                return null;
+            }
+
+            JsonObject dataObj = root.getAsJsonObject("data");
+
+            if (!dataObj.has("volume") || !dataObj.get("volume").isJsonObject()) {
+                return null;
+            }
+
+            JsonObject volumeObj = dataObj.getAsJsonObject("volume");
+            Gson gson = new Gson();
+            com.musicplayer.scamusica.model.VolumeSettings settings = gson.fromJson(volumeObj, com.musicplayer.scamusica.model.VolumeSettings.class);
+
+            if (settings != null) {
+                OfflineCache.saveVolumeSettings(settings);
+            }
+
+            return settings;
+        } catch (Exception e) {
+            AppLogger.log("[PlaylistApiService] fetchVolumeSettings failed, loading from cache: " + e.getMessage());
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance().addErrorLog(
+                        "API Fetch Error", "fetchVolumeSettings - " + e.getMessage());
+            } catch (Exception logEx) {}
+            return OfflineCache.loadVolumeSettings();
         }
     }
 
@@ -216,6 +270,10 @@ public class PlaylistApiService {
 
         } catch (Exception e) {
             AppLogger.log("[PlaylistApiService] fetchTracksForGenre failed, loading from cache: " + e.getMessage());
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance().addErrorLog(
+                        "API Fetch Error", "fetchTracksForGenre (" + genreTitle + ") - " + e.getMessage());
+            } catch (Exception logEx) {}
             List<PlaylistTrack> cached = OfflineCache.loadTracks(genreTitle);
             if (!cached.isEmpty()) {
                 AppLogger.log("[PlaylistApiService] Using cached tracks for: " + genreTitle);
@@ -326,6 +384,10 @@ public class PlaylistApiService {
 
         } catch (Exception e) {
             AppLogger.log("[PlaylistApiService] fetchDownloadSequence failed, loading from cache: " + e.getMessage());
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance().addErrorLog(
+                        "API Fetch Error", "fetchDownloadSequence (" + genreTitle + ") - " + e.getMessage());
+            } catch (Exception logEx) {}
             List<Integer> cached = OfflineCache.loadDownloadSequence(genreTitle);
             AppLogger.log("[PlaylistApiService] Using cached sequence: " + cached.size() + " items");
             return cached;
@@ -350,15 +412,21 @@ public class PlaylistApiService {
         }
 
         String title;
-        if (songObj.has("file") && !songObj.get("file").isJsonNull()) {
+        if (songObj.has("title") && !songObj.get("title").isJsonNull() && !songObj.get("title").getAsString().trim().isEmpty()) {
+            title = songObj.get("title").getAsString();
+        } else if (songObj.has("file") && !songObj.get("file").isJsonNull()) {
             String fileName = songObj.get("file").getAsString();
             title = fileName.endsWith(".mp3")
                     ? fileName.substring(0, fileName.length() - 4)
                     : fileName;
-        } else if (songObj.has("title") && !songObj.get("title").isJsonNull()) {
-            title = songObj.get("title").getAsString();
         } else {
             title = "Unknown Title";
+        }
+
+        if (songObj.has("artist") && !songObj.get("artist").isJsonNull() && !songObj.get("artist").getAsString().trim().isEmpty()) {
+            title = title + " - " + songObj.get("artist").getAsString();
+        } else if (songObj.has("artist_name") && !songObj.get("artist_name").isJsonNull() && !songObj.get("artist_name").getAsString().trim().isEmpty()) {
+            title = title + " - " + songObj.get("artist_name").getAsString();
         }
 
         String filePath;
@@ -380,7 +448,7 @@ public class PlaylistApiService {
         if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
             fullUrl = filePath;
         } else {
-            fullUrl = Utility.BASE_URL.get() + filePath;
+            fullUrl = Utility.FILEPATH_BASE_URL.get() + "/" + filePath.replaceFirst("^/", "");
         }
 
         int durationSeconds = 0;
@@ -409,7 +477,7 @@ public class PlaylistApiService {
             if (albumImgPath.startsWith("http://") || albumImgPath.startsWith("https://")) {
                 fullAlbumImgUrl = albumImgPath;
             } else {
-                fullAlbumImgUrl = Utility.BASE_URL.get()
+                fullAlbumImgUrl = Utility.FILEPATH_BASE_URL.get()
                         + "/"
                         + albumImgPath.replaceFirst("^/", "");
             }
@@ -503,9 +571,23 @@ public class PlaylistApiService {
 
         } catch (Exception e) {
             AppLogger.log("[PlaylistApiService] fetchAds failed: " + e.getMessage());
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance().addErrorLog(
+                        "API Fetch Error", "fetchAds - " + e.getMessage());
+            } catch (Exception logEx) {}
             // Try cache if available
             // List<Ad> cached = OfflineCache.loadAds();
             return new ArrayList<>();
         }
+    }
+
+    public Set<Integer> fetchAllSongIdsAcrossSequences() throws Exception {
+        Set<Integer> allIds = new HashSet<>();
+        List<String> titles = fetchPlaylistTitles();
+        for (String title : titles) {
+            List<Integer> seq = fetchDownloadSequenceForGenre(title);
+            if (seq != null) allIds.addAll(seq);
+        }
+        return allIds;
     }
 }

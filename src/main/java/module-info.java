@@ -13,7 +13,6 @@ module com.musicplayer.scamusica {
     requires com.google.gson;
     requires java.desktop;
     requires java.prefs;
-    requires uk.co.caprica.vlcj;
 
     exports com.musicplayer.scamusica;
     /*exports com.musicplayer.scamusica.manager;

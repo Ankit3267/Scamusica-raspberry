@@ -77,6 +77,15 @@ public class PlaybackHistoryLogger {
 
             AppLogger.log("[HISTORY] Logged -> " + track.getTitle());
 
+            // Sync to server (additive — does not affect local logging)
+            try {
+                com.musicplayer.scamusica.service.LogSyncService.getInstance()
+                        .addSongLog(track.getId(), track.getTitle(),
+                                track.getFolderTitle(), track.getUrl());
+            } catch (Exception syncEx) {
+                AppLogger.log("[HISTORY] Server sync queue failed: " + syncEx.getMessage());
+            }
+
         } catch (Exception e) {
 
             AppLogger.log("[HISTORY ERROR] " + e.getMessage());

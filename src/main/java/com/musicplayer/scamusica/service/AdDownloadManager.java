@@ -76,7 +76,7 @@ public class AdDownloadManager {
                     .replace("(", "%28")
                     .replace(")", "%29");
             if (!encoded.startsWith("/")) encoded = "/" + encoded;
-            downloadUrl = Utility.BASE_URL.get() + encoded;
+            downloadUrl = Utility.FILEPATH_BASE_URL.get() + encoded;
         }
 
         final String finalUrl = downloadUrl;
@@ -121,6 +121,57 @@ public class AdDownloadManager {
         if (ads == null || ads.isEmpty()) return;
         for (Ad ad : ads) {
             downloadAd(ad);
+        }
+    }
+
+    /**
+     * Deletes downloaded ad audio files that are no longer in the current ad list.
+     * Call after syncing ads from server to free disk space.
+     */
+    public static void cleanupOrphanedAdFiles(List<Ad> currentAds) {
+        try {
+            File adDir = getAdDir();
+            File[] files = adDir.listFiles();
+            if (files == null || files.length == 0) return;
+
+            // Collect all valid ad audio IDs from the current ad list
+            java.util.Set<Integer> validAudioIds = new java.util.HashSet<>();
+            if (currentAds != null) {
+                for (Ad ad : currentAds) {
+                    if (ad.getAdAudios() != null) {
+                        for (com.musicplayer.scamusica.model.AdAudio audio : ad.getAdAudios()) {
+                            if (audio.getId() != null) {
+                                validAudioIds.add(audio.getId());
+                            }
+                        }
+                    }
+                }
+            }
+
+            int deletedCount = 0;
+            for (File f : files) {
+                if (f.isFile() && f.getName().startsWith("ad-audio-") && f.getName().endsWith(".mp3")) {
+                    try {
+                        String idStr = f.getName()
+                                .replace("ad-audio-", "")
+                                .replace(".mp3", "");
+                        int audioId = Integer.parseInt(idStr);
+                        if (!validAudioIds.contains(audioId)) {
+                            if (f.delete()) {
+                                deletedCount++;
+                                AppLogger.log("[AdDownload] Cleaned orphaned file: " + f.getName());
+                            }
+                        }
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+            }
+
+            if (deletedCount > 0) {
+                AppLogger.log("[AdDownload] Total orphaned ad files cleaned: " + deletedCount);
+            }
+        } catch (Exception e) {
+            AppLogger.log("[AdDownload] Cleanup error: " + e.getMessage());
         }
     }
 }

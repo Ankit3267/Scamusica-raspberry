@@ -30,17 +30,19 @@ public class DownloadManager {
         void onCancelled();
     }
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "DownloadManager");
-        t.setDaemon(true);
-        return t;
-    });
+    private ExecutorService executor;
     private final BlockingQueue<Integer> downloadQueue = new LinkedBlockingQueue<>();
     private volatile boolean cancelled = false;
     private final Set<Integer> activeDownloads = ConcurrentHashMap.newKeySet();
+    private final Set<Integer> cancelledIds = ConcurrentHashMap.newKeySet();
+    private static final int MAX_RETRIES = 3;
+    private static final long MIN_VALID_FILE_SIZE = 10_000; // 10KB
+    private final Map<Integer, Integer> retryCounts = new ConcurrentHashMap<>();
 
     private final DownloadListener listener;
     private final String downloadFolderPath;
+
+    private final Map<Integer, String> fallbackUrlMap = new ConcurrentHashMap<>();
 
     public DownloadManager(String downloadFolderPath,
                            DownloadListener listener) {
@@ -48,14 +50,34 @@ public class DownloadManager {
         this.downloadFolderPath = downloadFolderPath;
     }
 
+    public void registerFallbackUrl(int songId, String directUrl) {
+        if (directUrl != null && !directUrl.trim().isEmpty()) {
+            fallbackUrlMap.put(songId, directUrl);
+        }
+    }
+
+    public void setFallbackUrls(Map<Integer, String> urlMap) {
+        if (urlMap != null) {
+            fallbackUrlMap.putAll(urlMap);
+        }
+    }
+
     public void start() {
         cancelled = false;
+        executor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "DownloadManager");
+            t.setDaemon(true);
+            return t;
+        });
         executor.submit(this::runWorker);
     }
 
     public void stop() {
         cancelled = true;
-        executor.shutdownNow();
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
     }
 
     public void queueDownload(int songId) {
@@ -65,6 +87,27 @@ public class DownloadManager {
                 downloadQueue.offer(songId);
             }
         }
+    }
+
+    public void clearQueue() {
+        downloadQueue.clear();
+        activeDownloads.clear();
+        retryCounts.clear();
+        fallbackUrlMap.clear();
+        cancelledIds.clear();
+        AppLogger.log("[DOWNLOAD] Queue cleared");
+    }
+
+    public void removeFromQueue(Set<Integer> idsToRemove) {
+        if (idsToRemove == null || idsToRemove.isEmpty()) return;
+        downloadQueue.removeIf(idsToRemove::contains);
+        activeDownloads.removeAll(idsToRemove);
+        cancelledIds.addAll(idsToRemove);
+        for (Integer id : idsToRemove) {
+            retryCounts.remove(id);
+            fallbackUrlMap.remove(id);
+        }
+        AppLogger.log("[DOWNLOAD] Removed " + idsToRemove.size() + " IDs from queue");
     }
 
     private void runWorker() {
@@ -82,17 +125,31 @@ public class DownloadManager {
 
     private void processDownload(Integer id) {
         AppLogger.log("[DOWNLOAD] Starting: " + id);
+        
+        if (cancelledIds.remove(id)) {
+            AppLogger.log("[DOWNLOAD] Skipping cancelled download: " + id);
+            activeDownloads.remove(id);
+            retryCounts.remove(id);
+            return;
+        }
+
         try {
             File baseDir = new File(downloadFolderPath);
             if (!baseDir.exists()) baseDir.mkdirs();
 
             File outFile = new File(baseDir, "song-" + id + ".dat");
 
-            if (outFile.exists() && outFile.length() > 0) {
+            if (outFile.exists() && outFile.length() > MIN_VALID_FILE_SIZE) {
                 AppLogger.log("[DOWNLOAD][SKIP] Already exists: " + id);
                 if (listener != null) listener.onDownloadSkipped(id, outFile);
                 activeDownloads.remove(id); // 🔥 IMPORTANT
+                retryCounts.remove(id);
                 return;
+            }
+
+            if (outFile.exists() && outFile.length() <= MIN_VALID_FILE_SIZE) {
+                AppLogger.log("[DOWNLOAD] Deleting corrupted/truncated file: " + id + " (" + outFile.length() + " bytes)");
+                outFile.delete();
             }
 
             String streamUrl = Utility.BASE_URL.get() + "/api/music/songs/" + id + "/stream";
@@ -113,19 +170,59 @@ public class DownloadManager {
 
             boolean success = ApiClient.downloadEncrypted(streamUrl, headers, outFile, progressCallback);
 
-            if (success) {
-                AppLogger.log("[DOWNLOAD][DONE] " + id);
-                if (listener != null) listener.onDownloadCompleted(id, outFile);
-            } else {
-                if (outFile.exists()) outFile.delete();
-                AppLogger.log("[DOWNLOAD][FAIL] Incomplete file deleted for id=" + id);
-                if (listener != null) listener.onDownloadFailed(id, new RuntimeException("Incomplete download, file too small"));
+            if (!success || !outFile.exists() || outFile.length() <= MIN_VALID_FILE_SIZE) {
+                String fallbackUrl = fallbackUrlMap.get(id);
+                if (fallbackUrl != null && !fallbackUrl.trim().isEmpty()) {
+                    AppLogger.log("[DOWNLOAD] Stream download failed for id=" + id + ", attempting direct fallback URL: " + fallbackUrl);
+                    if (outFile.exists()) outFile.delete();
+                    success = ApiClient.downloadEncrypted(fallbackUrl, null, outFile, progressCallback);
+                }
             }
 
-            activeDownloads.remove(id);
+            if (success && outFile.exists() && outFile.length() > MIN_VALID_FILE_SIZE) {
+                AppLogger.log("[DOWNLOAD][DONE] " + id);
+                if (listener != null) listener.onDownloadCompleted(id, outFile);
+                retryCounts.remove(id);
+            } else {
+                if (outFile.exists()) outFile.delete();
+                int attempts = retryCounts.getOrDefault(id, 0) + 1;
+                retryCounts.put(id, attempts);
+                
+                if (attempts < MAX_RETRIES && !cancelled) {
+                    long backoffMs = attempts * 5000L;
+                    AppLogger.log("[DOWNLOAD][RETRY] id=" + id + " attempt " + attempts + "/" + MAX_RETRIES + ", backoff " + backoffMs + "ms");
+                    try { Thread.sleep(backoffMs); } catch (InterruptedException ignored) {}
+                    if (!cancelled) {
+                        downloadQueue.offer(id);
+                    }
+                } else {
+                    AppLogger.log("[DOWNLOAD][FAIL] id=" + id + " after " + attempts + " attempts");
+                    if (listener != null) listener.onDownloadFailed(id, new RuntimeException("Incomplete download, file too small"));
+                    retryCounts.remove(id);
+                    activeDownloads.remove(id);
+                }
+            }
+
+            if (!retryCounts.containsKey(id)) {
+                activeDownloads.remove(id);
+            }
 
         } catch (Exception ex) {
-            if (listener != null) listener.onDownloadFailed(id, ex);
+            int attempts = retryCounts.getOrDefault(id, 0) + 1;
+            retryCounts.put(id, attempts);
+            
+            if (attempts < MAX_RETRIES && !cancelled) {
+                long backoffMs = attempts * 5000L;
+                AppLogger.log("[DOWNLOAD][RETRY] id=" + id + " after exception, attempt " + attempts + "/" + MAX_RETRIES);
+                try { Thread.sleep(backoffMs); } catch (InterruptedException ignored) {}
+                if (!cancelled) {
+                    downloadQueue.offer(id);
+                }
+            } else {
+                if (listener != null) listener.onDownloadFailed(id, ex);
+                retryCounts.remove(id);
+                activeDownloads.remove(id);
+            }
         }
     }
 }
