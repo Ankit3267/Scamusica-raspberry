@@ -1444,33 +1444,26 @@ public class PlayerController extends Application {
     }
 
     private void deleteSongFile(int id) {
-        if (isSongUsedByOtherSequences(id)) {
-            AppLogger.log("[DELETE] Song " + id + " still used by other sequences, keeping file");
+        try {
+            Set<Integer> defaultSequenceIds = apiService.fetchDefaultSequenceSongIds();
+            if (defaultSequenceIds == null || defaultSequenceIds.isEmpty()) {
+                AppLogger.log("[DELETE] Could not fetch default sequence IDs, skipping deletion for safety.");
+                return;
+            }
+            if (defaultSequenceIds.contains(id)) {
+                AppLogger.log("[DELETE] Song " + id + " is in default sequence, keeping file.");
+                return;
+            }
+        } catch (Exception e) {
+            AppLogger.log("[DELETE] Error checking default sequence: " + e.getMessage());
             return;
         }
+
         File file = new File(SONGS_DIR, "song-" + id + ".dat");
         if (file.exists()) {
             AppLogger.log("[DELETE] Removing file for ID: " + id);
             file.delete();
         }
-    }
-
-    private boolean isSongUsedByOtherSequences(int songId) {
-        try {
-            for (String title : playlistMaster) {
-                if (title.equals(currentPlaylistName)) continue;
-                List<PlaylistTrack> tracks = apiService.fetchTracksForGenre(title);
-                if (tracks != null) {
-                    for (PlaylistTrack t : tracks) {
-                        if (t.getId() != null && t.getId() == songId) return true;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            AppLogger.log("[DELETE] Error checking other sequences: " + e.getMessage());
-            return true; // Err on the safe side
-        }
-        return false;
     }
 
     private void hideDropdown(VBox dropdownCard) {
@@ -2594,36 +2587,31 @@ public class PlayerController extends Application {
     }
     private void cleanupOrphanedSongs(List<String> serverTitles) {
         try {
-            Set<Integer> allValidIds = new HashSet<>();
-            for (String title : serverTitles) {
-                try {
-                    List<Integer> seq = apiService.fetchDownloadSequenceForGenre(title);
-                    if (seq != null) allValidIds.addAll(seq);
-                } catch (Exception e) {
-                    AppLogger.log("[CLEANUP] Failed to fetch sequence for: " + title);
-                }
-            }
-
-            File songsDir = new File(SONGS_DIR);
-            if (songsDir.exists() && songsDir.isDirectory()) {
-                File[] files = songsDir.listFiles();
-                if (files != null) {
-                    int deletedCount = 0;
-                    for (File f : files) {
-                        if (f.getName().startsWith("song-") && f.getName().endsWith(".dat")) {
-                            try {
-                                int id = Integer.parseInt(f.getName().substring(5, f.getName().length() - 4));
-                                if (!allValidIds.contains(id)) {
-                                    if (f.delete()) {
-                                        deletedCount++;
-                                        AppLogger.log("[CLEANUP] Removed orphaned song: " + f.getName());
+            Set<Integer> allValidIds = apiService.fetchDefaultSequenceSongIds();
+            if (allValidIds == null || allValidIds.isEmpty()) {
+                AppLogger.log("[CLEANUP] Could not fetch default sequence IDs, skipping deletion for safety.");
+            } else {
+                File songsDir = new File(SONGS_DIR);
+                if (songsDir.exists() && songsDir.isDirectory()) {
+                    File[] files = songsDir.listFiles();
+                    if (files != null) {
+                        int deletedCount = 0;
+                        for (File f : files) {
+                            if (f.getName().startsWith("song-") && f.getName().endsWith(".dat")) {
+                                try {
+                                    int id = Integer.parseInt(f.getName().substring(5, f.getName().length() - 4));
+                                    if (!allValidIds.contains(id)) {
+                                        if (f.delete()) {
+                                            deletedCount++;
+                                            AppLogger.log("[CLEANUP] Removed orphaned song: " + f.getName());
+                                        }
                                     }
-                                }
-                            } catch (NumberFormatException ignored) {}
+                                } catch (NumberFormatException ignored) {}
+                            }
                         }
-                    }
-                    if (deletedCount > 0) {
-                        AppLogger.log("[CLEANUP] Total orphaned songs deleted: " + deletedCount);
+                        if (deletedCount > 0) {
+                            AppLogger.log("[CLEANUP] Total orphaned songs deleted: " + deletedCount);
+                        }
                     }
                 }
             }

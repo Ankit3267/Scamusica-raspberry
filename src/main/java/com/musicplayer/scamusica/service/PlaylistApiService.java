@@ -581,12 +581,41 @@ public class PlaylistApiService {
         }
     }
 
-    public Set<Integer> fetchAllSongIdsAcrossSequences() throws Exception {
+    public Set<Integer> fetchDefaultSequenceSongIds() {
         Set<Integer> allIds = new HashSet<>();
-        List<String> titles = fetchPlaylistTitles();
-        for (String title : titles) {
-            List<Integer> seq = fetchDownloadSequenceForGenre(title);
-            if (seq != null) allIds.addAll(seq);
+        try {
+            String token = SessionManager.loadToken();
+            if (token == null || token.trim().isEmpty() || SessionManager.isTokenExpired(token)) {
+                return allIds;
+            }
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Bearer " + token);
+            headers.put("Accept", "application/json");
+
+            String endpoint = Utility.BASE_URL.get() + Utility.DEFAULT_SEQUENCE_ENDPOINT.get();
+            String response = ApiClient.get(endpoint, headers);
+
+            if (response == null || response.isEmpty()) {
+                return allIds;
+            }
+
+            JsonObject root = JsonParser.parseString(response).getAsJsonObject();
+            if (root.has("data") && root.get("data").isJsonObject()) {
+                JsonObject dataObj = root.getAsJsonObject("data");
+                if (dataObj.has("song_ids") && dataObj.get("song_ids").isJsonArray()) {
+                    JsonArray idsArray = dataObj.getAsJsonArray("song_ids");
+                    for (JsonElement idEl : idsArray) {
+                        if (idEl.isJsonPrimitive()) {
+                            try {
+                                allIds.add(idEl.getAsInt());
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            AppLogger.log("[PlaylistApiService] fetchDefaultSequenceSongIds failed: " + e.getMessage());
         }
         return allIds;
     }
