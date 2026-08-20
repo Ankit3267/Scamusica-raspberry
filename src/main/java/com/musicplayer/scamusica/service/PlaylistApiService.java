@@ -306,8 +306,6 @@ public class PlaylistApiService {
                 commonPath = root.get("filePath").getAsString();
             }
 
-            Set<Integer> seenIds = new HashSet<>();
-
             for (JsonElement seqEl : sequences) {
                 if (!seqEl.isJsonObject())
                     continue;
@@ -346,7 +344,7 @@ public class PlaylistApiService {
                         if (!songEl.isJsonObject())
                             continue;
                         PlaylistTrack track = parseSongToTrack(songEl.getAsJsonObject(), commonPath, null, albumImg);
-                        if (track != null && track.getId() != null && seenIds.add(track.getId())) {
+                        if (track != null && track.getId() != null) {
                             tracks.add(track);
                         }
                     }

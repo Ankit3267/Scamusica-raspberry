@@ -1005,19 +1005,9 @@ public class PlayerController extends Application {
                 return; // Skip the rest of sync — loadPlaylistAndStart handles everything
             }
 
-            // ✅ ADD
+            // ✅ ADD - Queue downloads for new unique files
             for (PlaylistTrack t : serverTracks) {
                 if (toAdd.contains(t.getId())) {
-                    boolean exists;
-                    synchronized (playQueue) {
-                        exists = playQueue.stream()
-                                .anyMatch(x -> x.getId() == t.getId());
-                    }
-
-                    if (!exists) {
-                        playQueue.add(t);
-                    }
-
                     if (downloadManager != null) {
                         if (t != null && t.getId() != null && t.getUrl() != null) {
                             downloadManager.registerFallbackUrl(t.getId(), t.getUrl());
@@ -1027,23 +1017,35 @@ public class PlayerController extends Application {
                 }
             }
 
-            // ✅ RESHUFFLE remaining queue when new styles/songs are added
-            // using the server-provided download sequence order
-            if (!toAdd.isEmpty()) {
-                synchronized (playQueue) {
-                    int startIdx = currentTrackIndex + 1;
-                    if (startIdx < playQueue.size()) {
-                        List<PlaylistTrack> remaining = new ArrayList<>(
-                                playQueue.subList(startIdx, playQueue.size()));
-                        reorderTracksBySequence(remaining, currentDownloadSequence);
-                        for (int i = 0; i < remaining.size(); i++) {
-                            playQueue.set(startIdx + i, remaining.get(i));
+            // Remember the currently playing track before we rebuild
+            PlaylistTrack playingTrack = null;
+            synchronized (playQueue) {
+                if (currentTrackIndex >= 0 && currentTrackIndex < playQueue.size()) {
+                    playingTrack = playQueue.get(currentTrackIndex);
+                }
+
+                // ✅ REBUILD play queue to perfectly match the new sequence
+                playQueue.clear();
+                playQueue.addAll(serverTracks);
+                reorderTracksBySequence(playQueue, currentDownloadSequence);
+
+                if (playingTrack != null) {
+                    int newIndex = -1;
+                    for (int i = 0; i < playQueue.size(); i++) {
+                        if (playQueue.get(i).getId() == playingTrack.getId()) {
+                            newIndex = i;
+                            break;
                         }
-                        AppLogger.log("[SYNC] New styles/songs detected — reordered "
-                                + remaining.size() + " remaining tracks in playQueue "
-                                + "based on server sequence (from index " + startIdx + ")");
+                    }
+                    if (newIndex != -1) {
+                        currentTrackIndex = newIndex;
+                    } else {
+                        // Current track was removed, will be handled by DELETE block
+                        // Default to -1 so that playNextTrack will start at index 0
+                        currentTrackIndex = -1;
                     }
                 }
+                AppLogger.log("[SYNC] Rebuilt play queue to match updated sequence. New size: " + playQueue.size());
             }
 
             // ✅ DELETE
@@ -1052,17 +1054,13 @@ public class PlayerController extends Application {
             }
             for (Integer id : toDelete) {
 
-                PlaylistTrack current = null;
 
-                if (currentTrackIndex < playQueue.size()) {
-                    current = playQueue.get(currentTrackIndex);
-                }
 
                 playQueue.removeIf(track -> track.getId() == id);
 
                 deleteSongFile(id);
 
-                if (current != null && current.getId() == id) {
+                if (playingTrack != null && playingTrack.getId() == id) {
                     Platform.runLater(() -> {
                         try {
                             playNextTrack(null, null, null, null, null, null, null, null);
