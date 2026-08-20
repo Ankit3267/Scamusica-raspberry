@@ -95,6 +95,28 @@ public class PlayerController extends Application {
     private String currentAlbumImgUrl = null;
     private Image defaultAlbumImage = null;
 
+    private Stage primaryStage;
+    private Stage splashStage;
+
+    public void startWithSplash(Stage primaryStage, Stage splashStage) {
+        this.primaryStage = primaryStage;
+        this.splashStage = splashStage;
+        this.start(primaryStage);
+    }
+
+    private void showMainUI() {
+        Platform.runLater(() -> {
+            if (splashStage != null) {
+                splashStage.close();
+                splashStage = null;
+            }
+            if (primaryStage != null && !primaryStage.isShowing()) {
+                primaryStage.show();
+            }
+            startBackgroundServices();
+        });
+    }
+
     private void setDefaultAlbumImage() {
         if (albumImageView != null) {
             Platform.runLater(() -> albumImageView.setImage(defaultAlbumImage));
@@ -191,12 +213,12 @@ public class PlayerController extends Application {
         }
     }
 
-    @Override
-    public void start(Stage primaryStage) {
+    private boolean backgroundServicesStarted = false;
 
-        AppLogger.init();
-        AppLogger.log("[APP] Player starting...");
-
+    private synchronized void startBackgroundServices() {
+        if (backgroundServicesStarted) return;
+        backgroundServicesStarted = true;
+        
         asyncExecutor.submit(() -> {
             migrateFromSequenceFolders();
             // === TEMP CLEANUP ===
@@ -232,6 +254,13 @@ public class PlayerController extends Application {
             
             initializeAdSystem();
         });
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+
+        AppLogger.init();
+        AppLogger.log("[APP] Player starting...");
 
         audioPlayer = new CvlcAudioPlayer();
 
@@ -506,7 +535,8 @@ public class PlayerController extends Application {
             });
         });
 
-        primaryStage.show();
+        // REMOVED primaryStage.show() here to defer rendering until playlist is ready
+
 
         Platform.runLater(() -> {
             controlsUtil.setupSliderFill(progressSlider);
@@ -1942,6 +1972,7 @@ public class PlayerController extends Application {
             } else {
                 albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.noSong"));
             }
+            showMainUI();
 
                     }); // Close Platform.runLater
                 } catch (Exception e) {

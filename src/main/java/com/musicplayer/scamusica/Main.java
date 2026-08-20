@@ -11,6 +11,17 @@ import javafx.stage.Stage;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
+import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.stage.StageStyle;
+import java.util.ResourceBundle;
+import java.util.Locale;
 
 public class Main extends Application {
 
@@ -28,8 +39,10 @@ public class Main extends Application {
     public void start(Stage primaryStage) {
         System.setProperty("java.net.useSystemProxies", "true");
 
-        // ✅ Catch exceptions thrown on the JavaFX Application Thread (FX thread errors
-        // are NOT caught by Thread.setDefaultUncaughtExceptionHandler)
+        // 1. Show splash immediately
+        Stage splashStage = createSplashStage();
+        splashStage.show();
+
         Thread.currentThread().setUncaughtExceptionHandler((thread, throwable) -> {
             AppLogger.log("[Main-FXThread] Uncaught exception on JavaFX thread: " + throwable.toString());
             AppLogger.log("[Main-FXThread] Stack Trace:\n" + getFullStackTrace(throwable));
@@ -39,18 +52,91 @@ public class Main extends Application {
             } catch (Exception ignored) {}
         });
 
-        // Set prefer language from the session
-        String savedLang = SessionManager.getLanguage();
-        LanguageManager.setLanguage(savedLang != null ? savedLang : "en");
+        // 2. Run heavy initialization on a background thread so the splash
+        //    has time to render before we proceed to the main UI.
+        new Thread(() -> {
+            try {
+                // Set prefer language from the session
+                String savedLang = SessionManager.getLanguage();
+                boolean isLoggedIn = SessionManager.isUserLoggedIn();
 
-        if (SessionManager.isUserLoggedIn()) {
-            // User already has valid token → skip login screen
-            System.out.println("Auto-login using saved token");
-            new PlayerController().start(primaryStage);
-        } else {
-            CodeVerificationController codeVerificationController = new CodeVerificationController();
-            codeVerificationController.start(primaryStage);
+                javafx.application.Platform.runLater(() -> {
+                    try {
+                        LanguageManager.setLanguage(savedLang != null ? savedLang : "en");
+
+                        if (isLoggedIn) {
+                            System.out.println("Auto-login using saved token");
+                            new PlayerController().startWithSplash(primaryStage, splashStage);
+                        } else {
+                            CodeVerificationController codeVerificationController = new CodeVerificationController();
+                            codeVerificationController.start(primaryStage);
+                            splashStage.close();
+                        }
+                    } catch (Exception e) {
+                        AppLogger.log("[Main] Failed to start application: " + e.getMessage());
+                        e.printStackTrace();
+                        splashStage.close();
+                    }
+                });
+            } catch (Exception e) {
+                AppLogger.log("[Main] Background init failed: " + e.getMessage());
+                e.printStackTrace();
+                javafx.application.Platform.runLater(splashStage::close);
+            }
+        }, "Splash-Init-Thread").start();
+    }
+
+    private Stage createSplashStage() {
+        Stage splashStage = new Stage();
+        splashStage.initStyle(StageStyle.TRANSPARENT);
+
+        VBox root = new VBox(20);
+        root.setAlignment(Pos.CENTER);
+        // Dark gradient matching the app's theme
+        root.setStyle("-fx-background-color: linear-gradient(to bottom right, #1e1e1e, #0a0a0a); " +
+                      "-fx-border-color: #333333; -fx-border-width: 1px; -fx-background-radius: 10px; -fx-border-radius: 10px;");
+        root.setPrefSize(400, 300);
+
+        try {
+            java.net.URL logoUrl = getClass().getResource("/images/logo.png");
+            if (logoUrl != null) {
+                ImageView logoView = new ImageView(new Image(logoUrl.toExternalForm()));
+                logoView.setFitWidth(150);
+                logoView.setPreserveRatio(true);
+                root.getChildren().add(logoView);
+            } else {
+                AppLogger.log("[Main] logo.png not found in resources");
+            }
+        } catch (Exception e) {
+            AppLogger.log("[Main] Could not load logo for splash screen: " + e.getMessage());
         }
+
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setStyle("-fx-progress-color: #1DB954;"); // Spotify-like green or app theme color
+        spinner.setMaxSize(40, 40);
+        spinner.setScaleX(-1);
+
+        Label messageLabel = new Label();
+        messageLabel.setTextFill(Color.WHITE);
+        messageLabel.setStyle("-fx-font-family: 'Arial'; -fx-font-size: 14px;");
+        
+        try {
+            String savedLang = SessionManager.getLanguage();
+            Locale loc = new Locale(savedLang != null ? savedLang : "es");
+            ResourceBundle bundle = ResourceBundle.getBundle("i18n.messages", loc);
+            messageLabel.setText(bundle.getString("splash.loading"));
+        } catch (Exception e) {
+            messageLabel.setText("La aplicación se está iniciando. Por favor, espere");
+        }
+
+        root.getChildren().addAll(spinner, messageLabel);
+
+        Scene scene = new Scene(root, 400, 300);
+        scene.setFill(Color.TRANSPARENT);
+        splashStage.setScene(scene);
+        splashStage.centerOnScreen();
+
+        return splashStage;
     }
 
     public static void main(String[] args) {
