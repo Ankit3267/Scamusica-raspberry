@@ -122,12 +122,17 @@ public class PlayerHeader {
             Font.loadFont(clazz.getResourceAsStream("/fonts/Poppins-Regular.ttf"), 12);
             Font.loadFont(clazz.getResourceAsStream("/fonts/Poppins-Bold.ttf"), 12);
 
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSans-Regular.ttf"), 12);
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansArabic-Regular.ttf"), 12);
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansDevanagari-Regular.ttf"), 12);
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansJP-Regular.ttf"), 12);
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansSC-Regular.ttf"), 12);
-            Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansTC-Regular.ttf"), 12);
+            // Lazy load large CJK/Arabic fonts in background
+            new Thread(() -> {
+                try {
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSans-Regular.ttf"), 12);
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansArabic-Regular.ttf"), 12);
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansDevanagari-Regular.ttf"), 12);
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansJP-Regular.ttf"), 12);
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansSC-Regular.ttf"), 12);
+                    Font.loadFont(clazz.getResourceAsStream("/fonts/NotoSansTC-Regular.ttf"), 12);
+                } catch (Exception ignored) {}
+            }, "FontLoader-Thread").start();
 
         } catch (Exception ex) {}
     }

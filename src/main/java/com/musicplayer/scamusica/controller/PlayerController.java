@@ -195,41 +195,45 @@ public class PlayerController extends Application {
     public void start(Stage primaryStage) {
 
         AppLogger.init();
-        migrateFromSequenceFolders();
-        // === TEMP CLEANUP ===
-        try {
-            File tempDir = new File(System.getProperty("user.home")
-                    + File.separator + ".scamusica"
-                    + File.separator + "temp");
-            if (tempDir.exists() && tempDir.isDirectory()) {
-                File[] files = tempDir.listFiles();
-                if (files != null) {
-                    for (File f : files) {
-                        if (f.getName().startsWith("play_") && f.getName().endsWith(".mp3")) {
-                            f.delete();
+        AppLogger.log("[APP] Player starting...");
+
+        asyncExecutor.submit(() -> {
+            migrateFromSequenceFolders();
+            // === TEMP CLEANUP ===
+            try {
+                File tempDir = new File(System.getProperty("user.home")
+                        + File.separator + ".scamusica"
+                        + File.separator + "temp");
+                if (tempDir.exists() && tempDir.isDirectory()) {
+                    File[] files = tempDir.listFiles();
+                    if (files != null) {
+                        for (File f : files) {
+                            if (f.getName().startsWith("play_") && f.getName().endsWith(".mp3")) {
+                                f.delete();
+                            }
                         }
                     }
                 }
+            } catch (Exception ignored) {
             }
-        } catch (Exception ignored) {
-        }
 
-        // === NETWORK MONITOR START ===
-        NetworkMonitor.getInstance().start();
-        AppLogger.log("[APP] Player started");
+            // === NETWORK MONITOR START ===
+            NetworkMonitor.getInstance().start();
+            AppLogger.log("[APP] Network monitor started");
 
-        // Start heartbeat service
-        com.musicplayer.scamusica.service.HeartbeatService.getInstance().start();
+            // Start heartbeat service
+            com.musicplayer.scamusica.service.HeartbeatService.getInstance().start();
 
-        // Start log sync service
-        com.musicplayer.scamusica.service.LogSyncService.getInstance().start();
+            // Start log sync service
+            com.musicplayer.scamusica.service.LogSyncService.getInstance().start();
 
-        // Start memory watchdog
-        MemoryWatchdog.getInstance().start();
+            // Start memory watchdog
+            MemoryWatchdog.getInstance().start();
+            
+            initializeAdSystem();
+        });
 
         audioPlayer = new CvlcAudioPlayer();
-
-        initializeAdSystem();
 
         Button headphonesButton = sidebarUtil.createIconButton("fas-headphones");
         List<Button> sidebarButtons = Arrays.asList(headphonesButton);
@@ -306,28 +310,46 @@ public class PlayerController extends Application {
 
         recomputeGlobalCountAndUpdateUI();
 
-        List<String> tempList;
-        try {
-            PlaylistApiService playlistApiService = new PlaylistApiService();
-            List<String> apiPlaylists = playlistApiService.fetchPlaylistTitles();
-            if (apiPlaylists != null && !apiPlaylists.isEmpty()) {
-                tempList = new ArrayList<>(apiPlaylists);
-            } else {
-                tempList = tempPlaylist;
-                AppLogger.log("[PlayerController] API returned empty list, using fallback playlists.");
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            AppLogger.log("[PlayerController] API failed, checking offline cache...");
-            List<String> cached = OfflineCache.loadPlaylistTitles();
-            if (!cached.isEmpty()) {
-                tempList = cached;
-                AppLogger.log("[PlayerController] Using cached playlists: " + cached.size());
-            } else {
-                tempList = tempPlaylist; // hardcoded fallback
-                AppLogger.log("[PlayerController] No cache, using hardcoded fallback.");
-            }
+        List<String> tempList = OfflineCache.loadPlaylistTitles();
+        if (tempList.isEmpty()) {
+            tempList = tempPlaylist;
+            AppLogger.log("[PlayerController] No cache, using hardcoded fallback.");
+        } else {
+            AppLogger.log("[PlayerController] Using cached playlists: " + tempList.size());
         }
+
+        // Fetch titles in background to update later if needed
+        asyncExecutor.submit(() -> {
+            try {
+                List<String> apiPlaylists = apiService.fetchPlaylistTitles();
+                if (apiPlaylists != null && !apiPlaylists.isEmpty() && !apiPlaylists.equals(playlistMaster)) {
+                    Platform.runLater(() -> {
+                        AppLogger.log("[PlayerController] Background sync: Updating playlist titles.");
+                        String curr = playlistCurrent[0];
+                        playlistMaster.clear();
+                        playlistMaster.addAll(apiPlaylists);
+                        if (!playlistMaster.contains(curr)) {
+                            playlistCurrent[0] = playlistMaster.get(0);
+                            currentPlaylistName = playlistCurrent[0];
+                        }
+                        playlistViewItems.setAll(
+                            playlistMaster.stream()
+                                    .filter(s -> !s.equals(playlistCurrent[0]))
+                                    .collect(Collectors.toList()));
+                        if (playlistPill != null) {
+                            javafx.scene.Node n = playlistPill.lookup(".label");
+                            if (n instanceof Label) {
+                                ((Label) n).setText(playlistCurrent[0]);
+                            } else if (!playlistPill.getChildren().isEmpty() && playlistPill.getChildren().get(0) instanceof Label) {
+                                ((Label) playlistPill.getChildren().get(0)).setText(playlistCurrent[0]);
+                            }
+                        }
+                    });
+                }
+            } catch (Exception e) {
+                AppLogger.log("[PlayerController] Background playlist fetch failed: " + e.getMessage());
+            }
+        });
 
         playlistMaster.addAll(tempList);
 
@@ -619,14 +641,16 @@ public class PlayerController extends Application {
     }
 
     private void initVolumeScheduler() {
-        try {
-            volumeSettings = apiService.fetchVolumeSettings();
-            if (volumeSettings != null) {
-                currentAdVolume = volumeSettings.getAdVolume() != null ? volumeSettings.getAdVolume() : 100;
+        asyncExecutor.submit(() -> {
+            try {
+                volumeSettings = apiService.fetchVolumeSettings();
+                if (volumeSettings != null) {
+                    currentAdVolume = volumeSettings.getAdVolume() != null ? volumeSettings.getAdVolume() : 100;
+                }
+            } catch (Exception e) {
+                AppLogger.log("[PlayerController] Failed to fetch initial volume settings: " + e.getMessage());
             }
-        } catch (Exception e) {
-            AppLogger.log("[PlayerController] Failed to fetch initial volume settings: " + e.getMessage());
-        }
+        });
 
         Runnable volumeTask = () -> {
             try {
@@ -1607,16 +1631,21 @@ public class PlayerController extends Application {
         isFirstTrackStarted = false;
 
         try {
-            PlaylistApiService playlistApiService = new PlaylistApiService();
+            asyncExecutor.submit(() -> {
+                try {
+                    PlaylistApiService playlistApiService = new PlaylistApiService();
 
-            // ✅ STEP 1: Fetch both tracks AND download sequence
-            List<PlaylistTrack> fetchedTracks = playlistApiService.fetchTracksForGenre(playlistName);
-            List<Integer> downloadSeq = playlistApiService.fetchDownloadSequenceForGenre(playlistName);
+                    // ✅ STEP 1: Fetch both tracks AND download sequence
+                    List<PlaylistTrack> fetchedTracks = playlistApiService.fetchTracksForGenre(playlistName);
+                    List<Integer> downloadSeq = playlistApiService.fetchDownloadSequenceForGenre(playlistName);
 
-            if (downloadSeq == null)
-                downloadSeq = new ArrayList<>();
+                    if (downloadSeq == null)
+                        downloadSeq = new ArrayList<>();
 
-            currentDownloadSequence = new ArrayList<>(downloadSeq);
+                    final List<Integer> finalDownloadSeq = downloadSeq;
+
+                    Platform.runLater(() -> {
+                        currentDownloadSequence = new ArrayList<>(finalDownloadSeq);
 
             // ✅ STEP 2: KEY FIX - Reorder playQueue to match downloadSequence
             // This ensures first songs in queue are the first ones being downloaded
@@ -1656,7 +1685,7 @@ public class PlayerController extends Application {
                 }
             }
 
-            currentGenreTotalFiles = new HashSet<>(downloadSeq).size();
+            currentGenreTotalFiles = new HashSet<>(finalDownloadSeq).size();
 
             String genreFolderPath = SONGS_DIR;
 
@@ -1667,7 +1696,7 @@ public class PlayerController extends Application {
             }
             genreDir.setWritable(true, false);
 
-            int existingInGenre = countExistingSongFiles(new HashSet<>(downloadSeq));
+            int existingInGenre = countExistingSongFiles(new HashSet<>(finalDownloadSeq));
             currentGenreDownloadedCount.set(existingInGenre);
 
             updateGenreDownloadLabel(downloadLabel);
@@ -1675,10 +1704,10 @@ public class PlayerController extends Application {
             updatePlayButtonState(controlsWrapper);
 
             boolean needDownload = false;
-            if (downloadSeq.isEmpty()) {
+            if (finalDownloadSeq.isEmpty()) {
                 needDownload = false;
             } else {
-                for (Integer id : downloadSeq) {
+                for (Integer id : finalDownloadSeq) {
                     File candidate = new File(genreFolderPath, "song-" + id + ".dat");
                     if (candidate.exists() && candidate.length() <= 10_000) {
                         AppLogger.log("[PlayerController] Deleting incomplete file during sequence check: " + candidate.getName() + " (" + candidate.length() + " bytes)");
@@ -1692,8 +1721,8 @@ public class PlayerController extends Application {
 
             setGenreSwitchEnabled(true);
 
-            if (!downloadSeq.isEmpty()) {
-                final Set<Integer> listenerValidIds = new HashSet<>(downloadSeq);
+            if (!finalDownloadSeq.isEmpty()) {
+                final Set<Integer> listenerValidIds = new HashSet<>(finalDownloadSeq);
                 downloadManager = new DownloadManager(genreFolderPath,
                         new DownloadManager.DownloadListener() {
                             @Override
@@ -1870,7 +1899,7 @@ public class PlayerController extends Application {
                         }
                     }
                 }
-                for (Integer id : downloadSeq) {
+                for (Integer id : finalDownloadSeq) {
                     downloadManager.queueDownload(id);
                 }
             } else {
@@ -1880,40 +1909,53 @@ public class PlayerController extends Application {
                 updatePlayButtonState(controlsWrapper);
             }
 
+            albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.loading"));
+            if (!playQueue.isEmpty()) {
+                isFirstTrackStarted = true;
+
+                int savedTrackId = prefs.getInt(PREF_RESUME_TRACK_ID, -1);
+                if (savedTrackId != -1) {
+                    for (int i = 0; i < playQueue.size(); i++) {
+                        if (playQueue.get(i).getId() == savedTrackId) {
+                            currentTrackIndex = i;
+                            AppLogger.log("[PlayerController] Resuming from saved track index: " + currentTrackIndex);
+                            break;
+                        }
+                    }
+                    prefs.remove(PREF_RESUME_TRACK_ID);
+                }
+
+                try {
+                    playTrack(
+                            albumHeading,
+                            titleLabel,
+                            progressSlider,
+                            leftTime,
+                            rightTime,
+                            controlsWrapper,
+                            bottomBar,
+                            downloadLabel,
+                            autoPlay);
+                } catch (java.net.URISyntaxException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.noSong"));
+            }
+
+                    }); // Close Platform.runLater
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Platform.runLater(() -> {
+                        setGenreSwitchEnabled(true);
+                        updatePlayButtonState(controlsWrapper);
+                    });
+                }
+            }); // Close asyncExecutor
         } catch (Exception e) {
             e.printStackTrace();
             setGenreSwitchEnabled(true);
             updatePlayButtonState(controlsWrapper);
-        }
-
-        albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.loading"));
-        if (!playQueue.isEmpty()) {
-            isFirstTrackStarted = true;
-
-            int savedTrackId = prefs.getInt(PREF_RESUME_TRACK_ID, -1);
-            if (savedTrackId != -1) {
-                for (int i = 0; i < playQueue.size(); i++) {
-                    if (playQueue.get(i).getId() == savedTrackId) {
-                        currentTrackIndex = i;
-                        AppLogger.log("[PlayerController] Resuming from saved track index: " + currentTrackIndex);
-                        break;
-                    }
-                }
-                prefs.remove(PREF_RESUME_TRACK_ID);
-            }
-
-            playTrack(
-                    albumHeading,
-                    titleLabel,
-                    progressSlider,
-                    leftTime,
-                    rightTime,
-                    controlsWrapper,
-                    bottomBar,
-                    downloadLabel,
-                    autoPlay);
-        } else {
-            albumHeading.textProperty().bind(LanguageManager.createStringBinding("label.noSong"));
         }
     }
 
@@ -2556,7 +2598,7 @@ public class PlayerController extends Application {
                 CipherInputStream cis = CryptoUtil.decrypt(fis);
                 FileOutputStream fos = new FileOutputStream(tempFile)) {
 
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[65536];
             int read;
 
             while ((read = cis.read(buffer)) != -1) {

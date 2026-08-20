@@ -16,8 +16,8 @@ public class PlaylistApiService {
     private static final String SONGS_URL = Utility.BASE_URL.get() + Utility.API_SONGS_ENDPOINT.get();
 
     // Cache to prevent multiple identical requests during a sync cycle
-    private JsonObject cachedRootJson = null;
-    private long cacheTimestamp = 0;
+    private static JsonObject cachedRootJson = null;
+    private static long cacheTimestamp = 0;
     private static final long CACHE_TTL_MS = 30_000; // 30 seconds
 
     public void clearCache() {

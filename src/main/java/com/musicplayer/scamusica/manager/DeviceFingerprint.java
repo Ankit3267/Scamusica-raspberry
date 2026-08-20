@@ -7,7 +7,13 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 public class DeviceFingerprint {
+    private static String cachedFingerprint = null;
+
     public static String getFingerprint() {
+        if (cachedFingerprint != null) {
+            return cachedFingerprint;
+        }
+
         try {
             AppLogger.log("[FINGERPRINT] Starting device fingerprint generation...");
 
@@ -59,6 +65,7 @@ public class DeviceFingerprint {
 
             String finalId = hex.toString();
             AppLogger.log("[FINGERPRINT] Final Generated Device ID: " + finalId);
+            cachedFingerprint = finalId;
             return finalId;
 
         } catch (Exception e) {

@@ -49,8 +49,6 @@ public class NetworkMonitor {
         if (running) return;
         running = true;
 
-        checkConnectivity();
-
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "NetworkMonitor");
             t.setDaemon(true);
@@ -59,7 +57,7 @@ public class NetworkMonitor {
 
         scheduler.scheduleAtFixedRate(
                 this::checkConnectivity,
-                CHECK_INTERVAL_SEC,
+                0,
                 CHECK_INTERVAL_SEC,
                 TimeUnit.SECONDS
         );
