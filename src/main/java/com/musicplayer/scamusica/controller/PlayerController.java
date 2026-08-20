@@ -1075,11 +1075,11 @@ public class PlayerController extends Application {
             try {
                 Set<Integer> validIds = new HashSet<>();
                 if (currentDownloadSequence != null && !currentDownloadSequence.isEmpty()) {
-                    currentGenreTotalFiles = currentDownloadSequence.size();
                     validIds.addAll(currentDownloadSequence);
+                    currentGenreTotalFiles = validIds.size();
                 } else {
-                    currentGenreTotalFiles = serverTracks.size();
                     for (PlaylistTrack t : serverTracks) validIds.add(t.getId());
+                    currentGenreTotalFiles = validIds.size();
                 }
 
                 int existingInGenre = countExistingSongFiles(validIds);
@@ -1656,7 +1656,7 @@ public class PlayerController extends Application {
                 }
             }
 
-            currentGenreTotalFiles = downloadSeq.size();
+            currentGenreTotalFiles = new HashSet<>(downloadSeq).size();
 
             String genreFolderPath = SONGS_DIR;
 
