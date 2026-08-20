@@ -112,6 +112,19 @@ public class PlayerController extends Application {
             }
             if (primaryStage != null && !primaryStage.isShowing()) {
                 primaryStage.show();
+                // Force CSS and layout pass so .track nodes exist for slider fill setup
+                primaryStage.getScene().getRoot().applyCss();
+                primaryStage.getScene().getRoot().layout();
+                
+                if (globalProgressSlider != null) {
+                    new PlayerControls().setupSliderFill(globalProgressSlider);
+                }
+                if (globalBottomBar != null) {
+                    Slider volumeSlider = new PlayerControls().getVolumeSlider(globalBottomBar);
+                    if (volumeSlider != null) {
+                        new PlayerControls().setupVolumeSliderFill(volumeSlider);
+                    }
+                }
             }
             startBackgroundServices();
         });
@@ -539,10 +552,7 @@ public class PlayerController extends Application {
 
 
         Platform.runLater(() -> {
-            controlsUtil.setupSliderFill(progressSlider);
-
             Slider volumeSlider = controlsUtil.getVolumeSlider(bottomBar);
-            controlsUtil.setupVolumeSliderFill(controlsUtil.getVolumeSlider(bottomBar));
 
             double savedVolume = prefs.getDouble(PREF_VOLUME, 85.0);
             volumeSlider.setValue(savedVolume);
