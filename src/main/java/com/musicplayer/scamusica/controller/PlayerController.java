@@ -1739,6 +1739,7 @@ public class PlayerController extends Application {
                 }
             }
 
+            String genreFolderPath = SONGS_DIR;
             File genreDir = new File(genreFolderPath);
             if (!genreDir.exists()) {
                 boolean created = genreDir.mkdirs();
