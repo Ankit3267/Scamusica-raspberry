@@ -75,55 +75,47 @@ public class NetworkMonitor {
     }
 
     private void checkConnectivity() {
-        boolean result = pingServer();
+        try {
+            boolean result = pingServer();
 
-        if (result) {
-            failureCount = 0;
-        } else {
-            failureCount++;
-            if (failureCount < FAILURE_THRESHOLD) {
-                AppLogger.log("[NetworkMonitor] Ping failed (" + failureCount + "/" + FAILURE_THRESHOLD + "), waiting...");
-                return;
+            if (result) {
+                failureCount = 0;
+            } else {
+                failureCount++;
+                if (failureCount < FAILURE_THRESHOLD) {
+                    AppLogger.log("[NetworkMonitor] Ping failed (" + failureCount + "/" + FAILURE_THRESHOLD + "), waiting...");
+                    return;
+                }
             }
+
+            Platform.runLater(() -> {
+                if (online.get() != result) {
+                    online.set(result);
+                    AppLogger.log("[NetworkMonitor] Status changed → " + (result ? "ONLINE" : "OFFLINE"));
+                }
+            });
+        } catch (Throwable t) {
+            AppLogger.log("[NetworkMonitor] Error in checkConnectivity: " + t.getMessage());
         }
-
-        Platform.runLater(() -> {
-            if (online.get() != result) {
-                online.set(result);
-                AppLogger.log("[NetworkMonitor] Status changed → " + (result ? "ONLINE" : "OFFLINE"));
-            }
-        });
     }
 
-        private boolean pingServer() {
-        HttpURLConnection connection = null;
+    private boolean pingServer() {
         try {
-            connection = (HttpURLConnection) new URL(PING_URL).openConnection();
-            connection.setConnectTimeout(TIMEOUT_MS);
-            connection.setReadTimeout(TIMEOUT_MS);
-            connection.setRequestMethod("HEAD");
-            connection.setInstanceFollowRedirects(false);
-            connection.setRequestProperty("Connection", "close");
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(PING_URL))
+                    .timeout(java.time.Duration.ofMillis(TIMEOUT_MS))
+                    .header("User-Agent", "ScamusicaPlayer/1.0")
+                    .method("HEAD", java.net.http.HttpRequest.BodyPublishers.noBody())
+                    .build();
             
-            int responseCode = connection.getResponseCode();
+            java.net.http.HttpResponse<Void> response = java.net.http.HttpClient.newHttpClient()
+                    .send(request, java.net.http.HttpResponse.BodyHandlers.discarding());
             
-            // Drain input stream to free socket
-            try (java.io.InputStream is = (responseCode >= 400) ? connection.getErrorStream() : connection.getInputStream()) {
-                if (is != null) {
-                    byte[] buf = new byte[8192];
-                    while (is.read(buf) != -1) {}
-                }
-            } catch (Exception ignored) {}
-            
-            return (responseCode == 204 || responseCode == 200 || responseCode == 301);
-        } catch (IOException e) {
+            int responseCode = response.statusCode();
+            return (responseCode >= 200 && responseCode < 400);
+        } catch (Exception e) {
+            AppLogger.log("[NetworkMonitor] pingServer Exception: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             return false;
-        } finally {
-            if (connection != null) {
-                try {
-                    connection.disconnect();
-                } catch (Exception ignored) {}
-            }
         }
     }
 }

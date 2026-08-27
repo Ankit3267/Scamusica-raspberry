@@ -1088,6 +1088,25 @@ public class PlayerController extends Application {
                     playingTrack = playQueue.get(currentTrackIndex);
                 }
 
+                // ✅ FETCH NEW DOWNLOAD SEQUENCE SO NEW SONGS ARE INCLUDED
+                try {
+                    List<Integer> newSeq = apiService.fetchDownloadSequenceForGenre(currentPlaylistName);
+                    if (newSeq != null && !newSeq.isEmpty()) {
+                        currentDownloadSequence = new ArrayList<>(newSeq);
+                        
+                        // Update UI counters using unique count so UI doesn't inflate
+                        final int total = new java.util.HashSet<>(currentDownloadSequence).size();
+                        Platform.runLater(() -> {
+                            currentGenreTotalFiles = total;
+                            if (globalDownloadLabel != null) {
+                                updateGenreDownloadLabel(globalDownloadLabel);
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    AppLogger.log("[SYNC] Failed to fetch updated download sequence: " + e.getMessage());
+                }
+
                 // ✅ REBUILD play queue to perfectly match the new sequence
                 playQueue.clear();
                 playQueue.addAll(serverTracks);
@@ -1137,13 +1156,17 @@ public class PlayerController extends Application {
 
             // Update Total files count for UI
             try {
-                Set<Integer> validIds = new HashSet<>();
                 if (currentDownloadSequence != null && !currentDownloadSequence.isEmpty()) {
+                    currentGenreTotalFiles = new java.util.HashSet<>(currentDownloadSequence).size();
+                } else {
+                    currentGenreTotalFiles = serverTracks.size();
+                }
+
+                java.util.Set<Integer> validIds = new java.util.HashSet<>();
+                if (currentDownloadSequence != null) {
                     validIds.addAll(currentDownloadSequence);
-                    currentGenreTotalFiles = validIds.size();
                 } else {
                     for (PlaylistTrack t : serverTracks) validIds.add(t.getId());
-                    currentGenreTotalFiles = validIds.size();
                 }
 
                 int existingInGenre = countExistingSongFiles(validIds);
@@ -1614,34 +1637,25 @@ public class PlayerController extends Application {
             return;
         }
 
-        // 1. Group tracks by style and shuffle each bucket
-        java.util.Map<String, List<PlaylistTrack>> styleBuckets = new java.util.HashMap<>();
+        // 1. Map ID to Track
+        java.util.Map<Integer, PlaylistTrack> idToTrack = new java.util.HashMap<>();
         for (PlaylistTrack t : tracksToReorder) {
-            String style = t.getFolderTitle();
-            if (style == null || style.isEmpty()) style = "UNKNOWN_STYLE";
-            styleBuckets.computeIfAbsent(style, k -> new ArrayList<>()).add(t);
-        }
-        for (List<PlaylistTrack> bucket : styleBuckets.values()) {
-            java.util.Collections.shuffle(bucket);
+            idToTrack.put(t.getId(), t);
         }
 
-        // 2. Reconstruct queue based on the style pattern derived from the sequence
+        // 2. Reconstruct queue exactly as sequence specifies (allowing duplicates)
         List<PlaylistTrack> reordered = new ArrayList<>();
         java.util.Set<Integer> handledIds = new java.util.HashSet<>();
 
         for (Integer id : sequence) {
-            String style = idToStyleMap.get(id);
-            if (style == null || style.isEmpty()) style = "UNKNOWN_STYLE";
-
-            List<PlaylistTrack> bucket = styleBuckets.get(style);
-            if (bucket != null && !bucket.isEmpty()) {
-                PlaylistTrack pulled = bucket.remove(0); // Pop the first randomized track
-                reordered.add(pulled);
-                handledIds.add(pulled.getId());
+            PlaylistTrack t = idToTrack.get(id);
+            if (t != null) {
+                reordered.add(t);
+                handledIds.add(id);
             }
         }
 
-        // 3. Add any leftovers (e.g. if sequence was missing something, or buckets had extra)
+        // 3. Add any leftovers (e.g. if sequence was missing something)
         for (PlaylistTrack t : tracksToReorder) {
             if (!handledIds.contains(t.getId())) {
                 reordered.add(t);
@@ -1725,18 +1739,15 @@ public class PlayerController extends Application {
                 }
             }
 
-            currentGenreTotalFiles = new HashSet<>(finalDownloadSeq).size();
-
-            String genreFolderPath = SONGS_DIR;
-
             File genreDir = new File(genreFolderPath);
             if (!genreDir.exists()) {
                 boolean created = genreDir.mkdirs();
                 AppLogger.log("[PlayerController] Genre folder created: " + created + " at " + genreFolderPath);
             }
-            genreDir.setWritable(true, false);
+            Set<Integer> validIds = new HashSet<>(finalDownloadSeq);
+            currentGenreTotalFiles = validIds.size();
 
-            int existingInGenre = countExistingSongFiles(new HashSet<>(finalDownloadSeq));
+            int existingInGenre = countExistingSongFiles(validIds);
             currentGenreDownloadedCount.set(existingInGenre);
 
             updateGenreDownloadLabel(downloadLabel);
