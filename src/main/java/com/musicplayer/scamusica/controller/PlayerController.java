@@ -258,6 +258,7 @@ public class PlayerController extends Application {
 
             // Start heartbeat service
             com.musicplayer.scamusica.service.HeartbeatService.getInstance().start();
+            com.musicplayer.scamusica.service.AutoUpdaterService.getInstance().start();
 
             // Start log sync service
             com.musicplayer.scamusica.service.LogSyncService.getInstance().start();
@@ -697,7 +698,7 @@ public class PlayerController extends Application {
                 if (volumeSettings == null)
                     return;
 
-                java.time.LocalTime now = java.time.LocalTime.now();
+                java.time.LocalTime now = java.time.LocalTime.now(java.time.ZoneId.of("UTC"));
                 com.musicplayer.scamusica.model.VolumeSchedule activeSchedule = null;
 
                 if (volumeSettings.getSchedules() != null) {
@@ -781,7 +782,7 @@ public class PlayerController extends Application {
             }
         };
 
-        long initialDelaySeconds = 60 - java.time.LocalTime.now().getSecond();
+        long initialDelaySeconds = 60 - java.time.LocalTime.now(java.time.ZoneId.of("UTC")).getSecond();
         schedular.scheduleAtFixedRate(volumeTask, initialDelaySeconds, 60, java.util.concurrent.TimeUnit.SECONDS);
         // Also run it immediately once on startup
         schedular.schedule(volumeTask, 2, java.util.concurrent.TimeUnit.SECONDS);
@@ -1247,7 +1248,7 @@ public class PlayerController extends Application {
                 Platform.runLater(() -> {
                     try {
 
-                        if (!playQueue.isEmpty() && currentTrackIndex < playQueue.size()) {
+                        if (!playQueue.isEmpty() && currentTrackIndex >= 0 && currentTrackIndex < playQueue.size()) {
                             PlaylistTrack track = playQueue.get(currentTrackIndex);
                             globalTitleLabel.setText(track.getTitle());
                             globalAlbumHeading.setText(currentPlaylistName);
@@ -1280,7 +1281,7 @@ public class PlayerController extends Application {
 
                 Platform.runLater(() -> {
                     try {
-                        if (!playQueue.isEmpty() && currentTrackIndex < playQueue.size()) {
+                        if (!playQueue.isEmpty() && currentTrackIndex >= 0 && currentTrackIndex < playQueue.size()) {
                             PlaylistTrack track = playQueue.get(currentTrackIndex);
 
                             File encryptedFile = new File(SONGS_DIR, "song-" + track.getId() + ".dat");
@@ -1436,6 +1437,11 @@ public class PlayerController extends Application {
                                         globalProgressSlider, null, null,
                                         globalControlsWrapper, globalBottomBar, null);
                             }
+                        } else {
+                            AppLogger.log("[AdPlayer] No track to resume. Playing next.");
+                            playNextTrack(globalAlbumHeading, globalTitleLabel,
+                                    globalProgressSlider, null, null,
+                                    globalControlsWrapper, globalBottomBar, null);
                         }
                     } catch (Exception e) {
                         e.printStackTrace();

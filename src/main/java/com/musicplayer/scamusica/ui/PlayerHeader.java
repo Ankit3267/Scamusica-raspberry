@@ -19,7 +19,7 @@ public class PlayerHeader {
         Label versionLbl = new Label();
         versionLbl.textProperty().bind(
                 Bindings.concat(
-                        LanguageManager.createStringBinding("label.version")," 11"
+                        LanguageManager.createStringBinding("label.version"), " " + com.musicplayer.scamusica.util.AppConfig.APP_VERSION
                 )
         );
         versionLbl.getStyleClass().add("meta-text");

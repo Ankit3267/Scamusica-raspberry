@@ -12,6 +12,7 @@
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/AdDownloadManager.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/AdPlayer.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/AdScheduler.java
+/windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/AutoUpdaterService.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/ConnectivityMonitor.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/CvlcAudioPlayer.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/service/DownloadManager.java
@@ -31,6 +32,7 @@
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/ui/PlayerHeader.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/ui/PlayerSidebar.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/util/ApiClient.java
+/windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/util/AppConfig.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/util/AppLogger.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/util/CryptoUtil.java
 /windows/sca-musica-player/Scamusica-raspberry-master/src/main/java/com/musicplayer/scamusica/util/DeviceUtil.java
