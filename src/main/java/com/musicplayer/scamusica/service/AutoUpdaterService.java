@@ -48,16 +48,19 @@ public class AutoUpdaterService {
             return t;
         });
 
-        // Check for updates initially after 1 minute, then every 24 hours
+        // Check for updates initially after 10 seconds, then every 24 hours
         scheduler.scheduleAtFixedRate(() -> {
             try {
+                AppLogger.log("[AutoUpdater] Timer triggered. Checking network status...");
                 if (NetworkMonitor.getInstance().isOnline()) {
                     checkForUpdates();
+                } else {
+                    AppLogger.log("[AutoUpdater] Skipped update check because NetworkMonitor says offline.");
                 }
             } catch (Exception e) {
                 AppLogger.log("[AutoUpdater] Error during update check: " + e.getMessage());
             }
-        }, 1, 24 * 60, TimeUnit.MINUTES);
+        }, 10, 24 * 60 * 60, TimeUnit.SECONDS);
     }
 
     private void checkForUpdates() {
@@ -71,8 +74,12 @@ public class AutoUpdaterService {
             }
             headers.put("Accept", "application/json");
 
+            AppLogger.log("[AutoUpdater] Calling Update API: " + UPDATE_URL);
             String response = ApiClient.get(UPDATE_URL, headers);
+            AppLogger.log("[AutoUpdater] API Response: " + response);
+
             if (response == null || response.isEmpty()) {
+                AppLogger.log("[AutoUpdater] API returned empty or null response. Aborting.");
                 return;
             }
 
