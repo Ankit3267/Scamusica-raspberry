@@ -30,6 +30,26 @@ public class PlayerHeader {
         }
         Label idLbl = new Label(idText);
         idLbl.getStyleClass().add("meta-text");
+
+        // Background thread to dynamically update the player name after the API sync finishes!
+        Thread nameUpdater = new Thread(() -> {
+            while(true) {
+                try {
+                    Thread.sleep(5000);
+                    String newName = com.musicplayer.scamusica.util.OfflineCache.loadPlayerName();
+                    if (newName != null && !newName.trim().isEmpty()) {
+                        String currentText = idLbl.getText();
+                        String newIdText = "ID: "+ (SessionManager.isUserLoggedIn()? SessionManager.getUserId():null) + " | " + newName;
+                        if (!currentText.equals(newIdText)) {
+                            javafx.application.Platform.runLater(() -> idLbl.setText(newIdText));
+                        }
+                    }
+                } catch (Exception e) { break; }
+            }
+        });
+        nameUpdater.setDaemon(true);
+        nameUpdater.start();
+
         Button supportBtn = new Button();
         supportBtn.textProperty().bind(LanguageManager.createStringBinding("button.support"));
         supportBtn.getStyleClass().add("support-pill");

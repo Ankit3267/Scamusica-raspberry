@@ -207,9 +207,22 @@ public class AutoUpdaterService {
             // Execute the script using systemd-run to escape the current service's cgroup.
             // This prevents systemd from killing the dpkg process when Java exits!
             AppLogger.log("[AutoUpdater] Executing DEB installer via systemd-run...");
-            Runtime.getRuntime().exec(new String[]{"sudo", "systemd-run", "/bin/bash", scriptPath});
+            Process p = Runtime.getRuntime().exec(new String[]{"sudo", "systemd-run", "/bin/bash", scriptPath});
             
-            // Allow the systemd-run command a moment to dispatch
+            // Wait for systemd-run to dispatch (it's asynchronous so it returns immediately)
+            p.waitFor();
+            if (p.exitValue() != 0) {
+                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getErrorStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    AppLogger.log("[AutoUpdater] systemd-run error: " + line);
+                }
+                AppLogger.log("[AutoUpdater] systemd-run failed. Falling back to nohup...");
+                Runtime.getRuntime().exec(new String[]{"bash", "-c", "sudo nohup bash " + scriptPath + " > /dev/null 2>&1 &"});
+            } else {
+                AppLogger.log("[AutoUpdater] systemd-run dispatched successfully.");
+            }
+            
             Thread.sleep(1000);
             
             AppLogger.log("[AutoUpdater] Shutting down application for DEB package upgrade.");
