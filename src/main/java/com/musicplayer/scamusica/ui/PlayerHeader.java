@@ -23,7 +23,12 @@ public class PlayerHeader {
                 )
         );
         versionLbl.getStyleClass().add("meta-text");
-        Label idLbl = new Label("ID: "+ (SessionManager.isUserLoggedIn()? SessionManager.getUserId():null));
+        String playerName = com.musicplayer.scamusica.util.OfflineCache.loadPlayerName();
+        String idText = "ID: "+ (SessionManager.isUserLoggedIn()? SessionManager.getUserId():null);
+        if (playerName != null && !playerName.trim().isEmpty()) {
+            idText += " | " + playerName;
+        }
+        Label idLbl = new Label(idText);
         idLbl.getStyleClass().add("meta-text");
         Button supportBtn = new Button();
         supportBtn.textProperty().bind(LanguageManager.createStringBinding("button.support"));

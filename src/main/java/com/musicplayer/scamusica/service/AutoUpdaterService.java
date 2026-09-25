@@ -184,13 +184,17 @@ public class AutoUpdaterService {
 
             // Create a shell script to run dpkg -i safely outside of the Java process
             String scriptPath = "/tmp/apply_scamusica_update.sh";
+            String logPath = "/home/pi/scamusica-updater.log";
             String scriptContent = "#!/bin/bash\n"
-                    + "sleep 5\n"
-                    + "echo 'Starting DEB installation...' > /tmp/scamusica-updater.log\n"
-                    + "sudo dpkg -i " + debFilePath + " >> /tmp/scamusica-updater.log 2>&1\n"
-                    + "echo 'Restarting service...' >> /tmp/scamusica-updater.log\n"
-                    + "sudo systemctl daemon-reload >> /tmp/scamusica-updater.log 2>&1\n"
-                    + "sudo systemctl start scamusica >> /tmp/scamusica-updater.log 2>&1\n"
+                    + "sleep 3\n"
+                    + "echo 'Stopping service to prevent restart loops...' > " + logPath + "\n"
+                    + "sudo systemctl stop scamusica >> " + logPath + " 2>&1\n"
+                    + "sleep 2\n"
+                    + "echo 'Starting DEB installation...' >> " + logPath + "\n"
+                    + "sudo dpkg -i " + debFilePath + " >> " + logPath + " 2>&1\n"
+                    + "echo 'Reloading systemd and restarting service...' >> " + logPath + "\n"
+                    + "sudo systemctl daemon-reload >> " + logPath + " 2>&1\n"
+                    + "sudo systemctl start scamusica >> " + logPath + " 2>&1\n"
                     + "rm -f " + debFilePath + "\n"
                     + "rm -f /tmp/apply_scamusica_update.sh\n";
 
