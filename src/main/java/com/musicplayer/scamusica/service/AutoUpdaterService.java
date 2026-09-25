@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class AutoUpdaterService {
 
@@ -90,7 +92,7 @@ public class AutoUpdaterService {
 
                 if (isNewerVersion(AppConfig.APP_VERSION, latestVersion)) {
                     AppLogger.log("[AutoUpdater] New version found: " + latestVersion + ". Starting download...");
-                    downloadAndApplyUpdate(downloadUrl);
+                    downloadAndApplyUpdate(downloadUrl, latestVersion);
                 } else {
                     AppLogger.log("[AutoUpdater] App is up to date (" + AppConfig.APP_VERSION + ")");
                 }
@@ -114,7 +116,7 @@ public class AutoUpdaterService {
         return false;
     }
 
-    private void downloadAndApplyUpdate(String downloadUrlStr) {
+    private void downloadAndApplyUpdate(String downloadUrlStr, String latestVersion) {
         try {
             URL url = new URL(downloadUrlStr);
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -122,52 +124,88 @@ public class AutoUpdaterService {
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(60000);
 
-            File destFile = new File(UPDATE_JAR_DEST);
+            // Add Authorization token since this is now an API route
+            String token = SessionManager.loadToken();
+            if (token != null && !token.isEmpty()) {
+                connection.setRequestProperty("Authorization", "Bearer " + token);
+            }
+
+            String debFileName = "scamusica-" + latestVersion + ".deb";
+            String debFilePath = "/tmp/" + debFileName;
+            File destFile = new File(debFilePath);
             if (destFile.exists()) {
                 destFile.delete();
             }
 
-            try (InputStream in = connection.getInputStream();
-                 FileOutputStream out = new FileOutputStream(destFile)) {
-                 
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                while ((bytesRead = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, bytesRead);
+            boolean foundDeb = false;
+
+            // Extract the DEB from the ZIP stream
+            try (InputStream in = connection.getInputStream()) {
+                if (downloadUrlStr.endsWith(".zip") || downloadUrlStr.contains("download-update")) {
+                    AppLogger.log("[AutoUpdater] Downloading and extracting ZIP archive...");
+                    try (ZipInputStream zis = new ZipInputStream(in)) {
+                        ZipEntry entry;
+                        while ((entry = zis.getNextEntry()) != null) {
+                            if (entry.getName().endsWith(".deb")) {
+                                AppLogger.log("[AutoUpdater] Found DEB in zip: " + entry.getName());
+                                try (FileOutputStream out = new FileOutputStream(destFile)) {
+                                    byte[] buffer = new byte[8192];
+                                    int bytesRead;
+                                    while ((bytesRead = zis.read(buffer)) != -1) {
+                                        out.write(buffer, 0, bytesRead);
+                                    }
+                                }
+                                foundDeb = true;
+                                zis.closeEntry();
+                                break; // Only need the first deb
+                            }
+                            zis.closeEntry();
+                        }
+                    }
+                } else {
+                    AppLogger.log("[AutoUpdater] Downloading DEB directly...");
+                    try (FileOutputStream out = new FileOutputStream(destFile)) {
+                        byte[] buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = in.read(buffer)) != -1) {
+                            out.write(buffer, 0, bytesRead);
+                        }
+                    }
+                    foundDeb = true;
                 }
             }
 
-            AppLogger.log("[AutoUpdater] Download complete. Executing update script...");
+            if (!foundDeb) {
+                AppLogger.log("[AutoUpdater] ERROR: No .deb file found in the download stream.");
+                return;
+            }
 
-            // Dynamically write the shell script to disk so the user doesn't need to include it in the installer
+            AppLogger.log("[AutoUpdater] DEB extraction complete. Preparing update script...");
+
+            // Create a shell script to run dpkg -i safely outside of the Java process
+            String scriptPath = "/tmp/apply_scamusica_update.sh";
             String scriptContent = "#!/bin/bash\n"
                     + "sleep 5\n"
-                    + "APP_DIR=\"/opt/scamusica/lib/app\"\n"
-                    + "UPDATE_JAR=\"$APP_DIR/Scamusica-update.jar\"\n"
-                    + "if [ -f \"$UPDATE_JAR\" ]; then\n"
-                    + "    rm -f $APP_DIR/Scamusica-*.jar\n"
-                    + "    mv \"$UPDATE_JAR\" \"$APP_DIR/Scamusica-latest.jar\"\n"
-                    + "    chmod 755 \"$APP_DIR/Scamusica-latest.jar\"\n"
-                    + "    sudo systemctl restart scamusica\n"
-                    + "fi\n";
+                    + "sudo dpkg -i " + debFilePath + "\n"
+                    + "rm -f " + debFilePath + "\n"
+                    + "rm -f /tmp/apply_scamusica_update.sh\n";
 
-            File scriptFile = new File(UPDATE_SCRIPT_PATH);
+            File scriptFile = new File(scriptPath);
             try (FileOutputStream fos = new FileOutputStream(scriptFile)) {
                 fos.write(scriptContent.getBytes());
             }
             scriptFile.setExecutable(true, false);
 
-            if (scriptFile.exists()) {
-                Runtime.getRuntime().exec(new String[]{"bash", UPDATE_SCRIPT_PATH});
-                
-                // Allow the script a moment to start before shutting down the JVM
-                Thread.sleep(1000);
-                
-                AppLogger.log("[AutoUpdater] Shutting down application for update.");
-                System.exit(0);
-            } else {
-                AppLogger.log("[AutoUpdater] ERROR: Failed to create update script at " + UPDATE_SCRIPT_PATH);
-            }
+            // Execute the script using systemd-run to escape the current service's cgroup.
+            // This prevents systemd from killing the dpkg process when Java exits!
+            AppLogger.log("[AutoUpdater] Executing DEB installer via systemd-run...");
+            Runtime.getRuntime().exec(new String[]{"sudo", "systemd-run", "/bin/bash", scriptPath});
+            
+            // Allow the systemd-run command a moment to dispatch
+            Thread.sleep(1000);
+            
+            AppLogger.log("[AutoUpdater] Shutting down application for DEB package upgrade.");
+            System.exit(0);
 
         } catch (Exception e) {
             AppLogger.log("[AutoUpdater] Update application failed: " + e.getMessage());
