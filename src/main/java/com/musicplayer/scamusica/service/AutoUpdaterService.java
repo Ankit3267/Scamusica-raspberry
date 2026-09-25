@@ -186,7 +186,11 @@ public class AutoUpdaterService {
             String scriptPath = "/tmp/apply_scamusica_update.sh";
             String scriptContent = "#!/bin/bash\n"
                     + "sleep 5\n"
-                    + "sudo dpkg -i " + debFilePath + "\n"
+                    + "echo 'Starting DEB installation...' > /tmp/scamusica-updater.log\n"
+                    + "sudo dpkg -i " + debFilePath + " >> /tmp/scamusica-updater.log 2>&1\n"
+                    + "echo 'Restarting service...' >> /tmp/scamusica-updater.log\n"
+                    + "sudo systemctl daemon-reload >> /tmp/scamusica-updater.log 2>&1\n"
+                    + "sudo systemctl start scamusica >> /tmp/scamusica-updater.log 2>&1\n"
                     + "rm -f " + debFilePath + "\n"
                     + "rm -f /tmp/apply_scamusica_update.sh\n";
 
