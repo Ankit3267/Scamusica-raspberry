@@ -229,6 +229,8 @@ public class OfflineCache {
         } catch (Exception e) {
             AppLogger.log("[OfflineCache] Failed to remove cache for: " + sequenceName + " - " + e.getMessage());
         }
+    }
+    
     public static void savePlayerName(String name) {
         try {
             File file = new File(getCacheDir(), "player_name.txt");
