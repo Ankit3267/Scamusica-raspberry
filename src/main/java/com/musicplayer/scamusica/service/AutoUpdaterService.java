@@ -234,29 +234,29 @@ public class AutoUpdaterService {
 
             AppLogger.log("[AutoUpdater] Update script written to: " + scriptPath);
 
-            // Launch the script using setsid to create a new session leader.
-            // This fully detaches it from the Java process tree so it survives System.exit().
-            AppLogger.log("[AutoUpdater] Launching update script via setsid...");
-            Process p = Runtime.getRuntime().exec(new String[]{
-                "setsid", "bash", scriptPath
+            // Show a popup to the user in the UI thread
+            javafx.application.Platform.runLater(() -> {
+                try {
+                    javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION);
+                    alert.setTitle("Update Available");
+                    alert.setHeaderText("New Version Downloaded");
+                    alert.setContentText("A new version of the player has been successfully downloaded.\nThe player will now automatically restart to apply the update.");
+                    alert.show();
+                } catch (Exception e) {}
             });
 
-            // Give setsid a moment to fork the new session
-            Thread.sleep(2000);
+            // Wait 5 seconds so the user can read the popup
+            Thread.sleep(5000);
 
-            // Verify the script process is running
-            AppLogger.log("[AutoUpdater] Update script launched. Verifying...");
-            try {
-                Process check = Runtime.getRuntime().exec(new String[]{"pgrep", "-f", "apply_scamusica_update"});
-                check.waitFor();
-                if (check.exitValue() == 0) {
-                    AppLogger.log("[AutoUpdater] ✅ Update script is running in background.");
-                } else {
-                    AppLogger.log("[AutoUpdater] ⚠️ Update script may not be running. Check " + logPath);
-                }
-            } catch (Exception e) {
-                AppLogger.log("[AutoUpdater] Could not verify script: " + e.getMessage());
-            }
+            // Launch the script using systemd-run --user to create a transient unit.
+            // This fully escapes the scamusica.service cgroup so the script isn't killed
+            // when it stops the scamusica.service!
+            AppLogger.log("[AutoUpdater] Launching update script via systemd-run...");
+            Process p = Runtime.getRuntime().exec(new String[]{
+                "systemd-run", "--user", "--quiet", "bash", scriptPath
+            });
+
+            p.waitFor();
 
             AppLogger.log("[AutoUpdater] Shutting down application for DEB package upgrade.");
             System.exit(0);
