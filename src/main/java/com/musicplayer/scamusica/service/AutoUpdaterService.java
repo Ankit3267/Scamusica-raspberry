@@ -130,8 +130,11 @@ public class AutoUpdaterService {
                 connection.setRequestProperty("Authorization", "Bearer " + token);
             }
 
+            // CRITICAL: Write DEB to /home/pi/ NOT /tmp/
+            // The scamusica service uses PrivateTmp (systemd default), so /tmp/ files
+            // are private to the service and get DELETED when the service stops.
             String debFileName = "scamusica-" + latestVersion + ".deb";
-            String debFilePath = "/tmp/" + debFileName;
+            String debFilePath = "/home/pi/" + debFileName;
             File destFile = new File(debFilePath);
             if (destFile.exists()) {
                 destFile.delete();
@@ -180,51 +183,81 @@ public class AutoUpdaterService {
                 return;
             }
 
-            AppLogger.log("[AutoUpdater] DEB extraction complete. Preparing update script...");
+            AppLogger.log("[AutoUpdater] DEB extracted to: " + debFilePath + " (size: " + destFile.length() + " bytes)");
 
-            // Create a shell script to run dpkg -i safely outside of the Java process
-            String scriptPath = "/tmp/apply_scamusica_update.sh";
+            // CRITICAL: Write the update script to /home/pi/ NOT /tmp/ (same PrivateTmp reason)
+            String scriptPath = "/home/pi/apply_scamusica_update.sh";
             String logPath = "/home/pi/scamusica-updater.log";
+
+            // The scamusica service is a USER service (systemctl --user), NOT a system service.
+            // So we must use "systemctl --user" commands, running as the pi user.
             String scriptContent = "#!/bin/bash\n"
-                    + "sleep 3\n"
-                    + "echo 'Stopping service to prevent restart loops...' > " + logPath + "\n"
-                    + "sudo systemctl stop scamusica >> " + logPath + " 2>&1\n"
+                    + "exec > " + logPath + " 2>&1\n"
+                    + "echo \"[$(date)] OTA Update script started\"\n"
+                    + "echo \"[$(date)] Waiting for Java process to exit...\"\n"
+                    + "sleep 5\n"
+                    + "\n"
+                    + "# Stop the user service to prevent Restart=always from fighting us\n"
+                    + "echo \"[$(date)] Stopping scamusica user service...\"\n"
+                    + "export XDG_RUNTIME_DIR=/run/user/$(id -u pi)\n"
+                    + "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus\n"
+                    + "systemctl --user stop scamusica.service 2>/dev/null || true\n"
                     + "sleep 2\n"
-                    + "echo 'Starting DEB installation...' >> " + logPath + "\n"
-                    + "sudo dpkg -i " + debFilePath + " >> " + logPath + " 2>&1\n"
-                    + "echo 'Reloading systemd and restarting service...' >> " + logPath + "\n"
-                    + "sudo systemctl daemon-reload >> " + logPath + " 2>&1\n"
-                    + "sudo systemctl start scamusica >> " + logPath + " 2>&1\n"
+                    + "\n"
+                    + "# Kill any remaining Java processes just in case\n"
+                    + "pkill -f 'com.musicplayer.scamusica.Main' 2>/dev/null || true\n"
+                    + "sleep 1\n"
+                    + "\n"
+                    + "# Install the new DEB package\n"
+                    + "echo \"[$(date)] Installing DEB: " + debFilePath + "\"\n"
+                    + "sudo dpkg -i " + debFilePath + "\n"
+                    + "DPKG_EXIT=$?\n"
+                    + "echo \"[$(date)] dpkg exit code: $DPKG_EXIT\"\n"
+                    + "\n"
+                    + "# Reload systemd and restart the service\n"
+                    + "echo \"[$(date)] Reloading systemd daemon...\"\n"
+                    + "systemctl --user daemon-reload\n"
+                    + "echo \"[$(date)] Starting scamusica service...\"\n"
+                    + "systemctl --user start scamusica.service\n"
+                    + "START_EXIT=$?\n"
+                    + "echo \"[$(date)] systemctl start exit code: $START_EXIT\"\n"
+                    + "\n"
+                    + "# Cleanup\n"
                     + "rm -f " + debFilePath + "\n"
-                    + "rm -f /tmp/apply_scamusica_update.sh\n";
+                    + "echo \"[$(date)] OTA Update complete!\"\n";
 
             File scriptFile = new File(scriptPath);
             try (FileOutputStream fos = new FileOutputStream(scriptFile)) {
                 fos.write(scriptContent.getBytes());
             }
-            scriptFile.setExecutable(true, false);
+            scriptFile.setExecutable(true, true);
 
-            // Execute the script using systemd-run to escape the current service's cgroup.
-            // This prevents systemd from killing the dpkg process when Java exits!
-            AppLogger.log("[AutoUpdater] Executing DEB installer via systemd-run...");
-            Process p = Runtime.getRuntime().exec(new String[]{"sudo", "systemd-run", "/bin/bash", scriptPath});
-            
-            // Wait for systemd-run to dispatch (it's asynchronous so it returns immediately)
-            p.waitFor();
-            if (p.exitValue() != 0) {
-                java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getErrorStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    AppLogger.log("[AutoUpdater] systemd-run error: " + line);
+            AppLogger.log("[AutoUpdater] Update script written to: " + scriptPath);
+
+            // Launch the script using setsid to create a new session leader.
+            // This fully detaches it from the Java process tree so it survives System.exit().
+            AppLogger.log("[AutoUpdater] Launching update script via setsid...");
+            Process p = Runtime.getRuntime().exec(new String[]{
+                "setsid", "bash", scriptPath
+            });
+
+            // Give setsid a moment to fork the new session
+            Thread.sleep(2000);
+
+            // Verify the script process is running
+            AppLogger.log("[AutoUpdater] Update script launched. Verifying...");
+            try {
+                Process check = Runtime.getRuntime().exec(new String[]{"pgrep", "-f", "apply_scamusica_update"});
+                check.waitFor();
+                if (check.exitValue() == 0) {
+                    AppLogger.log("[AutoUpdater] ✅ Update script is running in background.");
+                } else {
+                    AppLogger.log("[AutoUpdater] ⚠️ Update script may not be running. Check " + logPath);
                 }
-                AppLogger.log("[AutoUpdater] systemd-run failed. Falling back to nohup...");
-                Runtime.getRuntime().exec(new String[]{"bash", "-c", "sudo nohup bash " + scriptPath + " > /dev/null 2>&1 &"});
-            } else {
-                AppLogger.log("[AutoUpdater] systemd-run dispatched successfully.");
+            } catch (Exception e) {
+                AppLogger.log("[AutoUpdater] Could not verify script: " + e.getMessage());
             }
-            
-            Thread.sleep(1000);
-            
+
             AppLogger.log("[AutoUpdater] Shutting down application for DEB package upgrade.");
             System.exit(0);
 
