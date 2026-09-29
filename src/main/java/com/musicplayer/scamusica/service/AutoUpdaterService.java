@@ -192,23 +192,11 @@ public class AutoUpdaterService {
                     : "/home/pi/scamusica-updater.log";
 
             // The scamusica service is a USER service (systemctl --user), NOT a system service.
-            // So we must use "systemctl --user" commands, running as the pi user.
+            // We just install the deb package in the background. We DO NOT kill or restart the app.
+            // The user will get the new version next time they manually start the app.
             String scriptContent = "#!/bin/bash\n"
                     + "exec >> " + logPath + " 2>&1\n"
-                    + "echo \"[$(date)] OTA Update script started\"\n"
-                    + "echo \"[$(date)] Waiting for Java process to exit...\"\n"
-                    + "sleep 5\n"
-                    + "\n"
-                    + "# Stop the user service to prevent Restart=always from fighting us\n"
-                    + "echo \"[$(date)] Stopping scamusica user service...\"\n"
-                    + "export XDG_RUNTIME_DIR=/run/user/$(id -u pi 2>/dev/null || id -u)\n"
-                    + "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus\n"
-                    + "systemctl --user stop scamusica.service 2>/dev/null || true\n"
-                    + "sleep 2\n"
-                    + "\n"
-                    + "# Kill any remaining Java processes just in case\n"
-                    + "pkill -f 'com.musicplayer.scamusica.Main' 2>/dev/null || true\n"
-                    + "sleep 1\n"
+                    + "echo \"[$(date)] OTA Background Install script started\"\n"
                     + "\n"
                     + "# Install the new DEB package\n"
                     + "echo \"[$(date)] Installing DEB: " + debFilePath + "\"\n"
@@ -216,32 +204,9 @@ public class AutoUpdaterService {
                     + "DPKG_EXIT=$?\n"
                     + "echo \"[$(date)] dpkg exit code: $DPKG_EXIT\"\n"
                     + "\n"
-                    + "# Reload systemd and restart the service\n"
-                    + "echo \"[$(date)] Reloading systemd daemon...\"\n"
-                    + "systemctl --user daemon-reload 2>/dev/null || true\n"
-                    + "echo \"[$(date)] Starting scamusica service...\"\n"
-                    + "systemctl --user start scamusica.service\n"
-                    + "START_EXIT=$?\n"
-                    + "echo \"[$(date)] systemctl start exit code: $START_EXIT\"\n"
-                    + "\n"
-                    + "if [ $START_EXIT -ne 0 ]; then\n"
-                    + "    echo \"[$(date)] ⚠️ systemctl start failed or service not found. Starting manually...\"\n"
-                    + "    export DISPLAY=:0\n"
-                    + "    export XAUTHORITY=/home/pi/.Xauthority\n"
-                    + "    if [ -x \"/opt/scamusica/lib/app/scamusica_wrapper.sh\" ]; then\n"
-                    + "        nohup /opt/scamusica/lib/app/scamusica_wrapper.sh > /dev/null 2>&1 &\n"
-                    + "        echo \"[$(date)] ✅ Launched via wrapper manually.\"\n"
-                    + "    elif [ -x \"/opt/scamusica/bin/Scamusica\" ]; then\n"
-                    + "        nohup /opt/scamusica/bin/Scamusica > /dev/null 2>&1 &\n"
-                    + "        echo \"[$(date)] ✅ Launched binary manually.\"\n"
-                    + "    else\n"
-                    + "        echo \"[$(date)] ❌ No launcher found to start manually!\"\n"
-                    + "    fi\n"
-                    + "fi\n"
-                    + "\n"
                     + "# Cleanup\n"
                     + "rm -f " + debFilePath + "\n"
-                    + "echo \"[$(date)] OTA Update complete!\"\n";
+                    + "echo \"[$(date)] OTA Update background install complete! Will take effect on next restart.\"\n";
 
             File scriptFile = new File(scriptPath);
             try (FileOutputStream fos = new FileOutputStream(scriptFile)) {
@@ -251,39 +216,51 @@ public class AutoUpdaterService {
 
             AppLogger.log("[AutoUpdater] Update script written to: " + scriptPath);
 
-            // Show a popup to the user in the UI thread
-            javafx.application.Platform.runLater(() -> {
-                try {
-                    javafx.scene.control.Alert alert = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.INFORMATION);
-                    alert.setTitle("Update Available");
-                    alert.setHeaderText("New Version Downloaded");
-                    alert.setContentText("A new version of the player has been successfully downloaded.\nThe player will now automatically restart to apply the update.");
-                    alert.show();
-                } catch (Exception e) {}
-            });
+            // Show a toast notification instead of a blocking popup
+            showToast("Update downloaded.\nPlease restart the player manually to apply.");
 
-            // Wait 5 seconds so the user can read the popup
-            Thread.sleep(5000);
-
-            // Launch the script using systemd-run --user to create a transient unit.
-            // This fully escapes the scamusica.service cgroup so the script isn't killed
-            // when it stops the scamusica.service!
-            AppLogger.log("[AutoUpdater] Launching update script via systemd-run (or fallback to nohup)...");
+            // Launch the script via nohup directly. No need to escape cgroups or use systemd-run
+            // since we are no longer killing the service!
+            AppLogger.log("[AutoUpdater] Launching background install script...");
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", 
-                "export XDG_RUNTIME_DIR=/run/user/$(id -u); " +
-                "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus; " +
-                "systemd-run --user --quiet bash " + scriptPath + " || " +
                 "nohup bash " + scriptPath + " > /dev/null 2>&1 &"
             );
-            Process p = pb.start();
+            pb.start();
 
-            p.waitFor();
-
-            AppLogger.log("[AutoUpdater] Shutting down application for DEB package upgrade.");
-            System.exit(0);
+            AppLogger.log("[AutoUpdater] Update installed in background. Awaiting manual restart by user.");
+            
+            // REMOVED: System.exit(0) - let the user close it manually!
 
         } catch (Exception e) {
             AppLogger.log("[AutoUpdater] Update application failed: " + e.getMessage());
         }
+    }
+
+    private void showToast(String message) {
+        javafx.application.Platform.runLater(() -> {
+            try {
+                javafx.stage.Stage stage = new javafx.stage.Stage();
+                stage.initStyle(javafx.stage.StageStyle.TRANSPARENT);
+                stage.setAlwaysOnTop(true);
+                
+                javafx.scene.control.Label label = new javafx.scene.control.Label(message);
+                label.setStyle("-fx-background-color: rgba(0, 0, 0, 0.8); -fx-text-fill: white; -fx-padding: 20px; -fx-font-size: 18px; -fx-background-radius: 10px; -fx-font-weight: bold;");
+                label.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
+                
+                javafx.scene.Scene scene = new javafx.scene.Scene(new javafx.scene.layout.StackPane(label));
+                scene.setFill(javafx.scene.paint.Color.TRANSPARENT);
+                stage.setScene(scene);
+                
+                // Show the toast
+                stage.show();
+                
+                // Auto close after 7 seconds
+                javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(7));
+                delay.setOnFinished(event -> stage.close());
+                delay.play();
+            } catch (Exception e) {
+                AppLogger.log("[AutoUpdater] Failed to show toast: " + e.getMessage());
+            }
+        });
     }
 }
