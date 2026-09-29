@@ -187,19 +187,21 @@ public class AutoUpdaterService {
 
             // CRITICAL: Write the update script to /home/pi/ NOT /tmp/ (same PrivateTmp reason)
             String scriptPath = "/home/pi/apply_scamusica_update.sh";
-            String logPath = "/home/pi/scamusica-updater.log";
+            String logPath = (AppLogger.getCurrentLogFile() != null) 
+                    ? AppLogger.getCurrentLogFile().getAbsolutePath() 
+                    : "/home/pi/scamusica-updater.log";
 
             // The scamusica service is a USER service (systemctl --user), NOT a system service.
             // So we must use "systemctl --user" commands, running as the pi user.
             String scriptContent = "#!/bin/bash\n"
-                    + "exec > " + logPath + " 2>&1\n"
+                    + "exec >> " + logPath + " 2>&1\n"
                     + "echo \"[$(date)] OTA Update script started\"\n"
                     + "echo \"[$(date)] Waiting for Java process to exit...\"\n"
                     + "sleep 5\n"
                     + "\n"
                     + "# Stop the user service to prevent Restart=always from fighting us\n"
                     + "echo \"[$(date)] Stopping scamusica user service...\"\n"
-                    + "export XDG_RUNTIME_DIR=/run/user/$(id -u pi)\n"
+                    + "export XDG_RUNTIME_DIR=/run/user/$(id -u pi 2>/dev/null || id -u)\n"
                     + "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus\n"
                     + "systemctl --user stop scamusica.service 2>/dev/null || true\n"
                     + "sleep 2\n"
@@ -216,11 +218,26 @@ public class AutoUpdaterService {
                     + "\n"
                     + "# Reload systemd and restart the service\n"
                     + "echo \"[$(date)] Reloading systemd daemon...\"\n"
-                    + "systemctl --user daemon-reload\n"
+                    + "systemctl --user daemon-reload 2>/dev/null || true\n"
                     + "echo \"[$(date)] Starting scamusica service...\"\n"
                     + "systemctl --user start scamusica.service\n"
                     + "START_EXIT=$?\n"
                     + "echo \"[$(date)] systemctl start exit code: $START_EXIT\"\n"
+                    + "\n"
+                    + "if [ $START_EXIT -ne 0 ]; then\n"
+                    + "    echo \"[$(date)] ⚠️ systemctl start failed or service not found. Starting manually...\"\n"
+                    + "    export DISPLAY=:0\n"
+                    + "    export XAUTHORITY=/home/pi/.Xauthority\n"
+                    + "    if [ -x \"/opt/scamusica/lib/app/scamusica_wrapper.sh\" ]; then\n"
+                    + "        nohup /opt/scamusica/lib/app/scamusica_wrapper.sh > /dev/null 2>&1 &\n"
+                    + "        echo \"[$(date)] ✅ Launched via wrapper manually.\"\n"
+                    + "    elif [ -x \"/opt/scamusica/bin/Scamusica\" ]; then\n"
+                    + "        nohup /opt/scamusica/bin/Scamusica > /dev/null 2>&1 &\n"
+                    + "        echo \"[$(date)] ✅ Launched binary manually.\"\n"
+                    + "    else\n"
+                    + "        echo \"[$(date)] ❌ No launcher found to start manually!\"\n"
+                    + "    fi\n"
+                    + "fi\n"
                     + "\n"
                     + "# Cleanup\n"
                     + "rm -f " + debFilePath + "\n"
@@ -251,10 +268,14 @@ public class AutoUpdaterService {
             // Launch the script using systemd-run --user to create a transient unit.
             // This fully escapes the scamusica.service cgroup so the script isn't killed
             // when it stops the scamusica.service!
-            AppLogger.log("[AutoUpdater] Launching update script via systemd-run...");
-            Process p = Runtime.getRuntime().exec(new String[]{
-                "systemd-run", "--user", "--quiet", "bash", scriptPath
-            });
+            AppLogger.log("[AutoUpdater] Launching update script via systemd-run (or fallback to nohup)...");
+            ProcessBuilder pb = new ProcessBuilder("bash", "-c", 
+                "export XDG_RUNTIME_DIR=/run/user/$(id -u); " +
+                "export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus; " +
+                "systemd-run --user --quiet bash " + scriptPath + " || " +
+                "nohup bash " + scriptPath + " > /dev/null 2>&1 &"
+            );
+            Process p = pb.start();
 
             p.waitFor();
 

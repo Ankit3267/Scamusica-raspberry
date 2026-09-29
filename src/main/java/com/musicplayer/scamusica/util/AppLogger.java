@@ -12,6 +12,10 @@ public class AppLogger {
     private static File currentLogFile;
     private static final long MAX_LOG_SIZE = 50 * 1024 * 1024; // 50 MB
 
+    public static File getCurrentLogFile() {
+        return currentLogFile;
+    }
+
     public static void init() {
         try {
             String baseDir = System.getProperty("user.home")
