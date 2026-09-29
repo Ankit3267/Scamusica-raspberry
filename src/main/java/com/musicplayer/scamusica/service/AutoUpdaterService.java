@@ -50,19 +50,41 @@ public class AutoUpdaterService {
             return t;
         });
 
-        // Check for updates initially after 10 seconds, then every 24 hours
-        scheduler.scheduleAtFixedRate(() -> {
-            try {
-                AppLogger.log("[AutoUpdater] Timer triggered. Checking network status...");
-                if (NetworkMonitor.getInstance().isOnline()) {
-                    checkForUpdates();
-                } else {
-                    AppLogger.log("[AutoUpdater] Skipped update check because NetworkMonitor says offline.");
-                }
-            } catch (Exception e) {
-                AppLogger.log("[AutoUpdater] Error during update check: " + e.getMessage());
+        scheduleNextUpdateCheck();
+    }
+
+    private void scheduleNextUpdateCheck() {
+        try {
+            java.time.ZoneId chileZone = java.time.ZoneId.of("America/Santiago");
+            java.time.ZonedDateTime now = java.time.ZonedDateTime.now(chileZone);
+            java.time.ZonedDateTime nextRun = now.withHour(1).withMinute(20).withSecond(0).withNano(0);
+
+            if (now.compareTo(nextRun) >= 0) {
+                // If it's already past 1:20 AM today, schedule for tomorrow
+                nextRun = nextRun.plusDays(1);
             }
-        }, 10, 24 * 60 * 60, TimeUnit.SECONDS);
+
+            long delay = java.time.Duration.between(now, nextRun).getSeconds();
+            AppLogger.log("[AutoUpdater] Next update check scheduled in " + delay + " seconds (at " + nextRun + ")");
+
+            scheduler.schedule(() -> {
+                try {
+                    AppLogger.log("[AutoUpdater] Timer triggered. Checking network status...");
+                    if (NetworkMonitor.getInstance().isOnline()) {
+                        checkForUpdates();
+                    } else {
+                        AppLogger.log("[AutoUpdater] Skipped update check because NetworkMonitor says offline.");
+                    }
+                } catch (Exception e) {
+                    AppLogger.log("[AutoUpdater] Error during update check: " + e.getMessage());
+                } finally {
+                    // Reschedule for the next day
+                    scheduleNextUpdateCheck();
+                }
+            }, delay, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            AppLogger.log("[AutoUpdater] Failed to schedule update check: " + e.getMessage());
+        }
     }
 
     private void checkForUpdates() {
