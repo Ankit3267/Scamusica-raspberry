@@ -250,6 +250,12 @@ jobs:
           done
 
           echo "✅ [Scamusica] Installation & system autostart configured successfully."
+
+          echo "🚀 [Scamusica] Auto-starting player..."
+          if id -u pi >/dev/null 2>&1; then
+              sudo -u pi bash -c "export XDG_RUNTIME_DIR=/run/user/\$(id -u pi); export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus; systemctl --user daemon-reload 2>/dev/null || true; systemctl --user start scamusica.service 2>/dev/null || (export DISPLAY=:0; export XAUTHORITY=/home/pi/.Xauthority; nohup /opt/scamusica/lib/app/scamusica_wrapper.sh > /dev/null 2>&1 &)"
+          fi
+
           exit 0
           EOF
           chmod 755 target/deb-extract/DEBIAN/postinst

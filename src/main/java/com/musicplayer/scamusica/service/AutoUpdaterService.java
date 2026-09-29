@@ -192,13 +192,14 @@ public class AutoUpdaterService {
                     : "/home/pi/scamusica-updater.log";
 
             // The scamusica service is a USER service (systemctl --user), NOT a system service.
-            // We just install the deb package in the background. We DO NOT kill or restart the app.
-            // The user will get the new version next time they manually start the app.
+            // We will run the dpkg install in the background. 
+            // The .deb package contains a pre-install script that kills the player,
+            // and a post-install script that automatically restarts it!
             String scriptContent = "#!/bin/bash\n"
                     + "exec >> " + logPath + " 2>&1\n"
-                    + "echo \"[$(date)] OTA Background Install script started\"\n"
+                    + "echo \"[$(date)] OTA Update script started\"\n"
                     + "\n"
-                    + "# Install the new DEB package\n"
+                    + "# Install the new DEB package (this will kill and then auto-restart the player!)\n"
                     + "echo \"[$(date)] Installing DEB: " + debFilePath + "\"\n"
                     + "sudo dpkg -i " + debFilePath + "\n"
                     + "DPKG_EXIT=$?\n"
@@ -206,7 +207,7 @@ public class AutoUpdaterService {
                     + "\n"
                     + "# Cleanup\n"
                     + "rm -f " + debFilePath + "\n"
-                    + "echo \"[$(date)] OTA Update background install complete! Will take effect on next restart.\"\n";
+                    + "echo \"[$(date)] OTA Update complete!\"\n";
 
             File scriptFile = new File(scriptPath);
             try (FileOutputStream fos = new FileOutputStream(scriptFile)) {
@@ -216,12 +217,11 @@ public class AutoUpdaterService {
 
             AppLogger.log("[AutoUpdater] Update script written to: " + scriptPath);
 
-            // Show a toast notification instead of a blocking popup
-            showToast("Update downloaded.\nPlease restart the player manually to apply.");
+            // Show a toast notification
+            showToast("New update downloaded!\nInstalling and restarting automatically...");
 
-            // Launch the script via nohup directly. No need to escape cgroups or use systemd-run
-            // since we are no longer killing the service!
-            AppLogger.log("[AutoUpdater] Launching background install script...");
+            // Launch the script via nohup directly. 
+            AppLogger.log("[AutoUpdater] Launching background install & restart script...");
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", 
                 "nohup bash " + scriptPath + " > /dev/null 2>&1 &"
             );
