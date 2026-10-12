@@ -39,6 +39,7 @@ public class AdPlayer {
 
     private volatile String savedSongPath = null;
     private volatile long savedSongTime = 0L;
+    private volatile Ad currentAd = null;
     private java.util.function.Supplier<Integer> adVolumeSupplier;
     private volatile int savedMusicVol = 100;
 
@@ -73,7 +74,18 @@ public class AdPlayer {
         if (playableAds.isEmpty()) return;
 
         AppLogger.log("[AdPlayer] Queueing " + playableAds.size() + " playable ads");
-        List<Ad> shuffled = new ArrayList<>(playableAds);
+        List<Ad> toAdd = new ArrayList<>();
+        for (Ad ad : playableAds) {
+            boolean inQueue = adQueue.stream().anyMatch(a -> a.getId() != null && a.getId().equals(ad.getId()));
+            boolean isPlaying = currentAd != null && currentAd.getId() != null && currentAd.getId().equals(ad.getId());
+            if (!inQueue && !isPlaying) {
+                toAdd.add(ad);
+            } else {
+                AppLogger.log("[AdPlayer] Ad already queued or playing, skipping duplicate: " + ad.getCampaignName());
+            }
+        }
+
+        List<Ad> shuffled = new ArrayList<>(toAdd);
         Collections.shuffle(shuffled);
         adQueue.addAll(shuffled);
 
@@ -88,8 +100,6 @@ public class AdPlayer {
         Ad nextAd = adQueue.poll();
         if (nextAd == null) {
             AppLogger.log("[AdPlayer] Queue empty, resuming song");
-            isPlayingAd = false;
-            songPausedForAds = false;
             resumeSong();
             return;
         }
@@ -110,6 +120,7 @@ public class AdPlayer {
     }
 
     private void playAdInternal(Ad ad) throws Exception {
+        currentAd = ad;
         AppLogger.log("[AdPlayer] Preparing ad: " + ad.getCampaignName());
 
         List<String> validUrls = new ArrayList<>();
@@ -220,6 +231,7 @@ public class AdPlayer {
         }
 
         // Step 6: Ad done, notify
+        currentAd = null;
         Platform.runLater(() -> listener.onAdPlaybackFinished(ad));
 
         // Step 7: Play next ad or resume song
@@ -232,6 +244,9 @@ public class AdPlayer {
                 listener.onSongResumed();
             } catch (Exception e) {
                 AppLogger.log("[AdPlayer] Resume error: " + e.getMessage());
+            } finally {
+                isPlayingAd = false;
+                songPausedForAds = false;
             }
         });
     }
@@ -276,6 +291,7 @@ public class AdPlayer {
 
     public void clearQueue() {
         adQueue.clear();
+        currentAd = null;
         AppLogger.log("[AdPlayer] Queue cleared");
     }
 

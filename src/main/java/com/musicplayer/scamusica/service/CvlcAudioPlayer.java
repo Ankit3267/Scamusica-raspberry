@@ -185,6 +185,11 @@ public class CvlcAudioPlayer {
                             pendingCommand = null;
                             return;
                         }
+
+                        // Re-apply volume continuously while playing to prevent VLC resets
+                        if ("playing".equals(currentState)) {
+                            sendCommand("volume " + (currentVolume * 2));
+                        }
                         
                         // We only query length until we have it
                         if (currentDurationMs <= 0) {

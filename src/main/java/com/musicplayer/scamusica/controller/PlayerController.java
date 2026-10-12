@@ -53,7 +53,7 @@ public class PlayerController extends Application {
     private Label globalLeftTime;
     private Label globalRightTime;
 
-    private CvlcAudioPlayer audioPlayer;
+    private volatile CvlcAudioPlayer audioPlayer;
     private boolean vlcHandlersAttached = false;
     private boolean userPaused = false;
 
@@ -758,15 +758,19 @@ public class PlayerController extends Application {
                         ? activeSchedule.getAdVolume()
                         : (volumeSettings.getAdVolume() != null ? volumeSettings.getAdVolume() : 100);
                 
+                currentAdVolume = newAdVolume;
+
                 int currentSetVol = (int) prefs.getDouble(PREF_VOLUME, 100.0);
-                boolean volumeNeedsUpdate = (newMusicVolume != currentSetVol);
+                
+                int actualVlcVol = audioPlayer != null ? audioPlayer.getVolume() : -1;
+                boolean vlcVolumeDrifted = (actualVlcVol >= 0 && Math.abs(actualVlcVol - newMusicVolume) > 2);
+                boolean volumeNeedsUpdate = (newMusicVolume != currentSetVol) || vlcVolumeDrifted;
+                
                 boolean scheduleChanged = isFirstVolumeApply || !java.util.Objects.equals(currentScheduleId, targetScheduleId);
 
                 if (scheduleChanged || (shouldDisableSlider && volumeNeedsUpdate)) {
                     currentScheduleId = targetScheduleId;
                     isFirstVolumeApply = false;
-
-                    currentAdVolume = newAdVolume;
 
                     AppLogger.log("[VolumeScheduler] Applying new volume settings: Music=" + newMusicVolume + ", Ad="
                             + newAdVolume);
@@ -1205,6 +1209,7 @@ public class PlayerController extends Application {
 
     private void initializeAdSystem() {
         AppLogger.log("[PlayerController] Initializing Ad System");
+        apiService.clearCache();
 
         // 1. Create AdPlayer with listeners
         adPlayer = new AdPlayer(audioPlayer, new AdPlayer.AdPlaybackListener() {
@@ -1443,12 +1448,30 @@ public class PlayerController extends Application {
                                 }, 1500, TimeUnit.MILLISECONDS);
                             } else {
                                 AppLogger.log("[AdPlayer] Cannot resume — offline and no local file. Playing next.");
+                                int musicVol = (int) prefs.getDouble(PREF_VOLUME, 85.0);
+                                AppLogger.log("[AdPlayer] Restoring music volume to: " + musicVol);
+                                audioPlayer.setVolume(musicVol);
+                                if (globalBottomBar != null) {
+                                    Slider volumeSlider = controlsUtil.getVolumeSlider(globalBottomBar);
+                                    if (volumeSlider != null) {
+                                        volumeSlider.setValue(musicVol);
+                                    }
+                                }
                                 playNextTrack(globalAlbumHeading, globalTitleLabel,
                                         globalProgressSlider, null, null,
                                         globalControlsWrapper, globalBottomBar, null);
                             }
                         } else {
                             AppLogger.log("[AdPlayer] No track to resume. Playing next.");
+                            int musicVol = (int) prefs.getDouble(PREF_VOLUME, 85.0);
+                            AppLogger.log("[AdPlayer] Restoring music volume to: " + musicVol);
+                            audioPlayer.setVolume(musicVol);
+                            if (globalBottomBar != null) {
+                                Slider volumeSlider = controlsUtil.getVolumeSlider(globalBottomBar);
+                                if (volumeSlider != null) {
+                                    volumeSlider.setValue(musicVol);
+                                }
+                            }
                             playNextTrack(globalAlbumHeading, globalTitleLabel,
                                     globalProgressSlider, null, null,
                                     globalControlsWrapper, globalBottomBar, null);
@@ -1531,9 +1554,6 @@ public class PlayerController extends Application {
             allAds = new ArrayList<>(serverAds);
             if (adScheduler != null) {
                 adScheduler.updateAds(allAds);
-            }
-            if (adPlayer != null && !adPlayer.isPlayingAd()) {
-                adPlayer.clearQueue();
             }
             OfflineCache.saveAdSchedule(allAds);
             if (!allAds.isEmpty()) {
