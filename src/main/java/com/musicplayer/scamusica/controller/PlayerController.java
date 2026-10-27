@@ -555,7 +555,7 @@ public class PlayerController extends Application {
         Platform.runLater(() -> {
             Slider volumeSlider = controlsUtil.getVolumeSlider(bottomBar);
 
-            double savedVolume = prefs.getDouble(PREF_VOLUME, 85.0);
+            double savedVolume = prefs.getDouble(PREF_VOLUME, 70.0);
             volumeSlider.setValue(savedVolume);
             audioPlayer.setVolume((int) savedVolume);
 

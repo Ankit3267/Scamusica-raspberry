@@ -33,7 +33,7 @@ public class CvlcAudioPlayer {
     private volatile long currentDurationMs = -1;
     private volatile long currentTimeMs = 0;
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
-    private volatile int currentVolume = 256; // 256 is 100% in VLC RC
+    private volatile int currentVolume = 179; // ~70% logarithmic on 0-256 VLC RC scale
     private volatile String currentState = "stopped";
     private volatile String pendingCommand = null;
     private volatile boolean isUserPaused = false;
@@ -188,7 +188,7 @@ public class CvlcAudioPlayer {
 
                         // Re-apply volume continuously while playing to prevent VLC resets
                         if ("playing".equals(currentState)) {
-                            sendCommand("volume " + (currentVolume * 2));
+                            sendCommand("volume " + currentVolume);
                         }
                         
                         // We only query length until we have it
@@ -322,16 +322,20 @@ public class CvlcAudioPlayer {
     }
 
     public void setVolume(int percentage) {
-        // VLC RC volume is 0-256 for 0-100%, but actually it's 0-512 sometimes.
-        // Usually, 256 is 100%. Let's scale percentage (0-100) to 0-256.
-        int vlcVol = (int) ((percentage / 100.0) * 256.0);
+        // Use a logarithmic (power) curve so that equal slider movements produce
+        // equal perceived loudness changes.  VLC RC "volume" range is 0-256 where
+        // 256 = 100 % / 0 dBFS (unity gain).  We never exceed 256 so we cannot
+        // amplify beyond unity and cause digital clipping inside VLC.
+        double clamped = Math.max(0.0, Math.min(100.0, percentage)) / 100.0;
+        // Quadratic curve: perceptual volume = (input)^2  (same shape as -10 dB log)
+        int vlcVol = (int) Math.round(clamped * clamped * 256.0);
         this.currentVolume = vlcVol;
         setVolumeInternal(vlcVol);
     }
 
     public int getVolume() {
-        // scale 0-256 back to 0-100
-        return (int) ((currentVolume / 256.0) * 100.0);
+        // Invert the quadratic curve to return the slider-percentage equivalent
+        return (int) Math.round(Math.sqrt(currentVolume / 256.0) * 100.0);
     }
 
     private void setVolumeInternal(int vlcVol) {
